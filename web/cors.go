@@ -10,22 +10,23 @@ import (
 )
 
 // CORSConfig configures the CORS middleware. CORS is disabled when
-// AllowedOrigins is empty.
+// AllowedOrigins is empty. The env tags let package config load it, e.g.
+// under envPrefix "HTTP_CORS_".
 type CORSConfig struct {
 	// AllowedOrigins are matched exactly against the Origin header.
 	// "*" allows any origin and cannot be combined with AllowCredentials.
-	AllowedOrigins []string
+	AllowedOrigins []string `env:"ALLOWED_ORIGINS"`
 	// AllowedMethods default to GET, POST, PUT, PATCH, DELETE.
-	AllowedMethods []string
+	AllowedMethods []string `env:"ALLOWED_METHODS"`
 	// AllowedHeaders default to Authorization, Content-Type, X-Request-ID,
 	// X-API-Key.
-	AllowedHeaders []string
+	AllowedHeaders []string `env:"ALLOWED_HEADERS"`
 	// ExposedHeaders are readable by browser clients on actual responses.
-	ExposedHeaders []string
+	ExposedHeaders []string `env:"EXPOSED_HEADERS"`
 	// AllowCredentials sends Access-Control-Allow-Credentials: true.
-	AllowCredentials bool
+	AllowCredentials bool `env:"ALLOW_CREDENTIALS"`
 	// MaxAge is how long preflight results may be cached. Default 10m.
-	MaxAge time.Duration
+	MaxAge time.Duration `env:"MAX_AGE"`
 }
 
 // Validate reports configuration errors.

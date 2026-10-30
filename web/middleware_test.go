@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/semii/semii/logx"
 )
 
 func TestChainOrder(t *testing.T) {
@@ -128,6 +130,7 @@ func TestLogger(t *testing.T) {
 	r.Public()
 	r.HandleFunc("GET /orders/{id}", func(w http.ResponseWriter, r *http.Request) error {
 		SetPrincipalID(r.Context(), "user-1")
+		logx.FromContext(r.Context()).Info("in handler")
 		return JSON(w, 200, "ok")
 	})
 	r.HandleFunc("GET /fail", func(http.ResponseWriter, *http.Request) error { return errors.New("x") })
@@ -135,8 +138,10 @@ func TestLogger(t *testing.T) {
 	r.HandleFunc("GET /silent", func(http.ResponseWriter, *http.Request) error { return nil })
 	h := Chain(r, RequestID(), RealIP(nil), Logger(log))
 
+	var handlerLog string
 	lines := func() []map[string]any {
 		var out []map[string]any
+		handlerLog = buf.String()
 		for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
 			if l == "" {
 				continue
@@ -157,6 +162,9 @@ func TestLogger(t *testing.T) {
 		t.Fatalf("lines %v", l)
 	}
 	m := l[0]
+	if !strings.Contains(handlerLog, `"msg":"in handler","request_id":"`+m["request_id"].(string)+`"`) {
+		t.Errorf("handler log not enriched: %s", handlerLog)
+	}
 	if m["level"] != "INFO" || m["route"] != "GET /orders/{id}" || m["status"] != 200.0 || m["principal_id"] != "user-1" ||
 		m["method"] != "GET" || m["client_ip"] != "192.0.2.1" || m["bytes_out"] != 5.0 || len(m["request_id"].(string)) != 26 {
 		t.Errorf("%v", m)

@@ -3,6 +3,7 @@ package validate
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -228,5 +229,25 @@ func TestBuiltinMessages(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Errorf("got %d errors want %d", len(got), len(want))
+	}
+}
+
+func TestWithFieldName(t *testing.T) {
+	type inner struct {
+		Addr string `env:"ADDR" validate:"hostname_port"`
+	}
+	type cfg struct {
+		HTTP inner  `envPrefix:"HTTP_"`
+		URL  string `env:"DATABASE_URL" validate:"required"`
+	}
+	v := New(WithFieldName(func(f reflect.StructField) string {
+		if p := f.Tag.Get("envPrefix"); p != "" {
+			return p
+		}
+		return f.Tag.Get("env")
+	}))
+	got := fields(t, v.Struct(context.Background(), cfg{HTTP: inner{Addr: "8080"}}))
+	if got["HTTP_.ADDR"].Message != "must be host:port" || got["DATABASE_URL"].Code != "required" {
+		t.Errorf("%v", got)
 	}
 }

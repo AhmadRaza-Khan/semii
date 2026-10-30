@@ -5,12 +5,18 @@ import (
 	"net/http"
 	"runtime/debug"
 	"time"
+
+	"github.com/semii/semii/logx"
 )
 
 // Logger logs one line per completed request with request_id, method,
 // route (the matched pattern, not the raw path), status, duration_ms,
 // bytes_out, client_ip and principal_id. 5xx responses log at Error, 4xx at
 // Warn, others at Info. Requests for /healthz and /readyz are not logged.
+// Request headers are never logged.
+//
+// Logger also stores log.With("request_id", ...) in the request context;
+// handlers retrieve it with logx.FromContext.
 func Logger(log *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -19,6 +25,7 @@ func Logger(log *slog.Logger) Middleware {
 				return
 			}
 			s, r := withState(r)
+			r = r.WithContext(logx.NewContext(r.Context(), log.With(slog.String("request_id", s.requestID))))
 			rw := wrapWriter(w)
 			start := time.Now()
 			next.ServeHTTP(rw, r)

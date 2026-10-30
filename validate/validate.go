@@ -48,12 +48,20 @@ type Option func(*options)
 
 type options struct {
 	passwordMin, passwordMax int
+	fieldName                func(reflect.StructField) string
 }
 
 // WithPasswordLength overrides the length bounds of the built-in "password"
 // rule (default 8..128 characters).
 func WithPasswordLength(min, max int) Option {
 	return func(o *options) { o.passwordMin, o.passwordMax = min, max }
+}
+
+// WithFieldName replaces how field names in errors are derived. The
+// default uses the query tag, then the json tag, then the Go field name.
+// Returning "" or "-" excludes the field from error paths.
+func WithFieldName(fn func(reflect.StructField) string) Option {
+	return func(o *options) { o.fieldName = fn }
 }
 
 // Validator validates structs. It is safe for concurrent use. Register must
@@ -70,12 +78,17 @@ var Default = New()
 
 // New returns a Validator with semii's built-in rules registered.
 func New(opts ...Option) *Validator {
-	o := options{passwordMin: 8, passwordMax: 128}
+	o := options{passwordMin: 8, passwordMax: 128, fieldName: fieldName}
 	for _, opt := range opts {
 		opt(&o)
 	}
 	v := validator.New(validator.WithRequiredStructEnabled())
-	v.RegisterTagNameFunc(fieldName)
+	v.RegisterTagNameFunc(func(f reflect.StructField) string {
+		if name := o.fieldName(f); name != "-" {
+			return name
+		}
+		return ""
+	})
 	val := &Validator{v: v, messages: map[string]string{}}
 	for _, r := range builtinRules(o) {
 		if err := val.Register(r.tag, r.fn, r.msg); err != nil {

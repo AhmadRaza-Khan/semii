@@ -75,6 +75,16 @@ func (v *Validator) message(fe validator.FieldError) string {
 		return "must be a datetime in format " + p
 	case "unique":
 		return "must not contain duplicate items"
+	case "hostname_port":
+		return "must be host:port"
+	case "hostname":
+		return "must be a valid hostname"
+	case "ip":
+		return "must be a valid IP address"
+	case "cidr":
+		return "must be a valid CIDR prefix"
+	case "http_url":
+		return "must be a valid http(s) URL"
 	}
 	if msg, ok := v.messages[fe.Tag()]; ok && msg != "" {
 		return strings.ReplaceAll(msg, "{param}", p)
