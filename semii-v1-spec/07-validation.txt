@@ -1,0 +1,68 @@
+SEMII v1 SPECIFICATION
+07 - VALIDATION (package validate)
+======================================================================
+
+1. ENGINE
+---------
+Wraps go-playground/validator/v10 behind a small API so it can be
+swapped without touching user code.
+
+  func New(opts ...Option) *Validator
+  func (v *Validator) Struct(ctx context.Context, s any) error   // returns Errors or nil
+  func (v *Validator) Register(tag string, fn Func, message string) error
+  var Default = New()   // the ONE package-level value; stateless, read-only after init
+
+web.Decode and web.DecodeQuery use the router's Validator
+(web.Options.Validator, default validate.Default).
+
+2. FIELD NAMES
+--------------
+Field names come from the json tag (or query tag for query binding),
+not the Go field name. Nested fields use dot paths: "address.city",
+slices use index: "items[2].qty".
+
+3. ERRORS
+---------
+  type FieldError struct {
+      Field   string `json:"field"`
+      Code    string `json:"code"`     // the rule tag: required, email, min...
+      Message string `json:"message"`
+      Param   string `json:"param,omitempty"`
+  }
+  type Errors []FieldError
+  func (e Errors) Error() string
+
+Rendered by web as 422 validation_failed (see 03-web.txt section 3).
+
+Default English messages for: required, email, url, uuid, min, max, len,
+gte, lte, gt, lt, oneof, alphanum, e164, datetime, unique (slice items).
+Custom message per field: `msg:"..."` tag overrides.
+
+4. CUSTOM RULES BUILT IN
+------------------------
+  decimal_gte=N / decimal_lte=N   for decimal.Decimal
+  notblank                        not empty after TrimSpace
+  password                        auth password policy (06-auth.txt)
+
+5. DOMAIN VALIDATION
+--------------------
+Struct tags cover shape only. Business rules live in services and
+return web.Unprocessable(detail, fields...) or a domain error mapped via
+Router.MapError. Generated services include a validateCreate stub as
+the documented place for this.
+
+6. GENERATED DTO EXAMPLE
+------------------------
+  type CreateInput struct {
+      CustomerID uuid.UUID       `json:"customer_id" validate:"required"`
+      Total      decimal.Decimal `json:"total" validate:"decimal_gte=0"`
+      Status     string          `json:"status" validate:"required,max=255"`
+      Notes      *string         `json:"notes" validate:"omitempty"`
+  }
+  type UpdateInput struct {   // PATCH: nil = unchanged
+      Total  *decimal.Decimal `json:"total" validate:"omitempty,decimal_gte=0"`
+      Status *string          `json:"status" validate:"omitempty,max=255"`
+      Notes  *string          `json:"notes"`
+  }
+  Explicit null to clear a nullable field uses web.Optional[T]
+  (tracks Set and Null) in UpdateInput for :null fields.

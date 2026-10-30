@@ -1,0 +1,71 @@
+SEMII v1 SPECIFICATION
+04 - CONFIG (package config)
+======================================================================
+
+1. API
+------
+  func Load[T any](opts ...Option) (T, error)
+  Options: WithPrefix("SHOP_"), WithDir(path), WithEnv(name),
+           WithLookup(func(string) (string, bool))  // for tests
+
+Fails fast: any missing required value, parse error or validation error
+returns one error listing ALL problems, e.g.:
+  config: 2 errors
+    DATABASE_URL: required
+    HTTP_ADDR: invalid host:port "8080"
+
+2. STRUCT TAGS
+--------------
+  env:"NAME"           env var name (required on leaf fields)
+  default:"value"      default when unset
+  validate:"..."       go-playground/validator rules
+  envPrefix:"HTTP_"    on nested structs
+  sep:","              slice separator (default ",")
+
+Supported types: string, bool, ints, uints, floats, time.Duration,
+time.Time (RFC3339), url.URL, netip.Prefix, netip.Addr, []T of the above,
+config.Secret, and any type implementing encoding.TextUnmarshaler.
+
+3. SOURCES AND PRECEDENCE (lowest to highest)
+---------------------------------------------
+  1. default tags
+  2. .env
+  3. .env.<SEMII_ENV>      (e.g. .env.test)
+  4. .env.local            (not loaded when SEMII_ENV=test)
+  5. process environment
+
+SEMII_ENV: development | test | production (default development).
+In production, .env files are NOT read unless SEMII_DOTENV=1.
+.env parser: KEY=value, quotes, `export` prefix, # comments, no
+variable expansion (FIXED; avoids surprises).
+
+4. SECRETS
+----------
+  type Secret string
+  func (s Secret) Reveal() string
+  String(), GoString(), MarshalJSON(), LogValue() return "[redacted]"
+Generated config uses Secret for DATABASE_URL, JWT_SECRET and SMTP_PASSWORD.
+
+5. GENERATED Config (excerpt)
+-----------------------------
+  type Config struct {
+      Env      string        `env:"SEMII_ENV" default:"development" validate:"oneof=development test production"`
+      LogLevel string        `env:"LOG_LEVEL" default:"info" validate:"oneof=debug info warn error"`
+      DatabaseURL config.Secret `env:"DATABASE_URL" validate:"required"`
+      HTTP HTTPConfig `envPrefix:"HTTP_"`
+      Auth auth.Config `envPrefix:"AUTH_"`
+  }
+  type HTTPConfig struct {
+      Addr           string        `env:"ADDR" default:":8080" validate:"hostname_port"`
+      MaxBodyBytes   int64         `env:"MAX_BODY_BYTES" default:"1048576"`
+      HandlerTimeout time.Duration `env:"HANDLER_TIMEOUT" default:"30s"`
+      TrustedProxies []netip.Prefix `env:"TRUSTED_PROXIES"`
+      CORS           web.CORSConfig `envPrefix:"CORS_"`
+  }
+
+6. RULES
+--------
+- Config is loaded once in main and passed down explicitly. No global.
+- `semii doctor` uses the same loader to report missing vars.
+- .env.example is generated and kept in sync by generators that add
+  config (e.g. generate auth appends AUTH_* keys).

@@ -1,0 +1,89 @@
+SEMII v1 SPECIFICATION
+08 - TESTING (package testkit)
+======================================================================
+
+1. GOALS
+--------
+- Integration tests against a REAL database, fast enough for every PR.
+- Unit tests for services with generated in-memory fakes.
+- Plain `go test ./...`; no custom runner.
+
+2. HTTP CLIENT
+--------------
+  func NewClient(t testing.TB, h http.Handler) *Client
+  c.GET(path) / POST / PUT / PATCH / DELETE  -> *Request
+  Request:
+    .JSON(v any)              body + content type
+    .Query(k, v string)
+    .Header(k, v string)
+    .Bearer(token string)
+    .Cookie(*http.Cookie)
+    .As(p *auth.Principal)    inject principal directly (unit-level)
+    .Do() *Response           uses httptest, no network
+  Response:
+    .ExpectStatus(code) *Response
+    .ExpectHeader(k, v) *Response
+    .ExpectJSON(subset any) *Response   // partial deep match
+    .ExpectProblem(status, code) *Response
+    .ExpectFieldError(field, code) *Response
+    .Decode(v any) *Response
+    .Body() []byte
+  Failures call t.Helper() + t.Fatalf with a diff and the response body.
+  Client keeps a cookie jar so session flows work across requests.
+
+3. TEST DATABASES
+-----------------
+  func Postgres(t testing.TB, opts ...DBOption) *pgxpool.Pool
+  func MySQL(t testing.TB, opts ...DBOption) *sql.DB
+  func SQLite(t testing.TB, opts ...DBOption) *sql.DB
+  func Mongo(t testing.TB, opts ...DBOption) (*mongo.Client, *mongo.Database)
+  func Main(m *testing.M)   // call from TestMain; starts/stops containers
+
+Strategy:
+  - One container per package via testcontainers-go, started lazily,
+    reused across tests in the package.
+  - TEST_DATABASE_URL set -> use that server instead (CI service
+    containers, no Docker-in-Docker).
+  - Postgres: migrations applied once to a template database; each test
+    gets CREATE DATABASE test_<n> TEMPLATE tpl (fast, isolated,
+    parallel-safe).
+  - MySQL: per-test database created and migrated (slower; documented).
+  - SQLite: per-test in-memory DB with migrations applied.
+  - Mongo: per-test database name; indexes ensured.
+  - Cleanup via t.Cleanup (drop DB).
+  - testing.Short() skips container tests with a clear message.
+
+4. TEST APP
+-----------
+Generated internal/app/testapp_test.go helper:
+  func newTestApp(t *testing.T) (*app.App, *testkit.Client)
+Builds the real app with test config (SEMII_ENV=test, LogSender,
+discard logger) against a per-test database.
+
+5. FACTORIES (generated, internal/factory)
+------------------------------------------
+  func Order(t testing.TB, q *sqlc.Queries, opts ...func(*order.CreateInput)) order.Order
+  func User(t testing.TB, q *sqlc.Queries, opts ...func(*UserInput)) (auth.User, string /*password*/)
+  func Token(t testing.TB, a *app.App, u auth.User) string   // JWT apps
+Factories fill valid defaults with unique values (sequence counter)
+and resolve refs by creating parents automatically.
+
+6. FAKES
+--------
+Generated fake_repo.go per resource:
+  - map-backed, mutex-protected, implements Repository
+  - returns db.ErrNotFound / db.ErrConflict like real repos
+  - error injection: fake.FailNext("Create", err)
+
+7. GENERATED TESTS
+------------------
+handler_test.go per resource covers: create 201, create 422, get 200,
+get 404, list pagination (next_cursor), patch, delete 204, 401 without
+auth. Auth flows ship with tests for every endpoint and the security
+checklist items that are testable at HTTP level.
+
+8. CI DEFAULTS
+--------------
+go test -race -count=1 ./...  with coverage profile.
+Target for the framework itself: >= 80% statement coverage on
+web, auth, config, validate, db/*.

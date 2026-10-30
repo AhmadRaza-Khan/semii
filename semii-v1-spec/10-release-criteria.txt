@@ -1,0 +1,77 @@
+SEMII v1 SPECIFICATION
+10 - MILESTONES AND v1.0 RELEASE CRITERIA
+======================================================================
+
+1. MILESTONES
+-------------
+M1  web core
+    Router + groups + error-returning handlers, problem+json, JSON
+    helpers, all built-in middleware, pagination helpers. Tests.
+
+M2  config + server + logx
+    Typed loader with precedence and Secret, server.Run with graceful
+    shutdown and health. Tests.
+
+M3  generator engine + Postgres
+    `semii new`, `generate resource`, `generate migration`, `migrate`,
+    `routes`, `dev`, `doctor` for Postgres only. Template shape frozen
+    after this milestone.
+
+M4  auth
+    auth package (authenticators, policies, password), `generate auth`
+    for session, jwt and apikey on Postgres. Security checklist passing.
+
+M5  testkit + remaining databases
+    testkit complete; MySQL, SQLite and Mongo templates for resource
+    and auth generators; db/sqldb and db/mongodb.
+
+M6  ops + docs + examples
+    Dockerfile, compose, CI, deploy templates, seeds, docs site,
+    examples/shop-postgres and examples/notes-mongo.
+
+2. v1.0 RELEASE BAR
+-------------------
+Functional
+  [ ] Every command in 01-cli.txt works for all 4 databases and all
+      auth strategies (matrix-tested in CI: db x auth)
+  [ ] Generated projects pass `go vet`, staticcheck and their own tests
+      with zero edits
+  [ ] `semii new` -> running authenticated CRUD API in under 10 minutes
+      following the README
+
+Quality
+  [ ] >= 80% coverage on web, auth, config, validate, db/*
+  [ ] go test -race clean
+  [ ] govulncheck clean
+  [ ] Router overhead benchmark within 10% of plain http.ServeMux
+      (published in docs)
+
+Security
+  [ ] Checklist in 06-auth.txt section 7 fully passing
+  [ ] Manual pentest of the generated example app (auth, IDOR on
+      generated resources, headers, CORS, body limits)
+
+Design
+  [ ] Each package importable standalone: example programs using only
+      web, only auth+web, only config, only db/migrate compile
+  [ ] No package-level mutable state (except validate.Default, read-only)
+  [ ] No reflection outside validate, config loader and JSON encoding
+
+Docs
+  [ ] Getting started, one page per package, generator reference,
+      deployment guide (Docker, systemd, PM2, Nginx)
+  [ ] Godoc on every exported identifier
+
+Stability
+  [ ] Public APIs of web, config, auth, validate, db/*, server, logx,
+      testkit frozen under semver (no breaking changes until v2)
+  [ ] .semii.yaml template version recorded for v2 `semii upgrade`
+  [ ] CHANGELOG.md and tagged release with prebuilt CLI binaries
+      (linux/amd64, linux/arm64, darwin/arm64, windows/amd64)
+
+3. v2 PREVIEW (not in v1 scope)
+-------------------------------
+jobs, mail, cache, storage, webhooks, OpenAPI + TS SDK generation,
+WebSocket/SSE, API versioning helpers, OIDC, RBAC, multi-tenancy,
+audit log, OpenTelemetry, Prometheus, Redis rate limiting,
+generate admin, LDAP/SAML/WebAuthn plugins, semii upgrade, i18n.

@@ -1,0 +1,163 @@
+SEMII v1 SPECIFICATION
+06 - AUTH (package auth + generated internal/auth)
+======================================================================
+
+1. RULES
+--------
+A1  No hand-written crypto. Use golang-jwt/jwt/v5, x/crypto/argon2,
+    crypto/rand, crypto/subtle, crypto/sha256, crypto/hmac.
+A2  Deny by default. Router.Verify() fails boot if any route lacks
+    Public() or Require(...).
+A3  Store only hashes of tokens/keys/session IDs, never raw values.
+A4  Generic auth failures: "invalid credentials", no user enumeration.
+A5  Constant-time comparison for every secret comparison.
+
+2. CORE TYPES (package auth)
+----------------------------
+  type Principal struct {
+      ID     string
+      Kind   string            // "user" | "apikey"
+      Roles  []string
+      Scopes []string
+      Claims map[string]any
+  }
+  func WithPrincipal(ctx context.Context, p *Principal) context.Context
+  func FromContext(ctx context.Context) (*Principal, bool)
+
+  type Authenticator interface {
+      // (nil, nil) when this authenticator's credentials are absent.
+      // ErrInvalidCredentials when present but invalid.
+      Authenticate(r *http.Request) (*Principal, error)
+  }
+
+  func Middleware(as ...Authenticator) web.Middleware
+    Tries authenticators in order. The first non-nil principal wins.
+    An invalid credential -> 401 immediately (no fall-through).
+    No credentials -> continues with no principal; route policy decides.
+
+  type Policy func(ctx context.Context, p *Principal, r *http.Request) error
+  func Authenticated() Policy
+  func Role(roles ...string) Policy      // any of
+  func Scope(scopes ...string) Policy    // all of
+  func Kind(k string) Policy
+  func Any(ps ...Policy) Policy
+  func All(ps ...Policy) Policy
+  Missing principal -> 401 (WWW-Authenticate set); failed policy -> 403.
+
+  Errors: ErrUnauthenticated, ErrForbidden, ErrInvalidCredentials,
+          ErrTokenExpired, ErrTokenReused
+
+  Roles in v1 are a []string on the user record (no RBAC tables; v2).
+
+3. PASSWORDS (auth/password)
+----------------------------
+  func Hash(pw string, p Params) (string, error)       // PHC string
+  func Verify(pw, encoded string) (ok bool, needsRehash bool, err error)
+  Default Params: argon2id, memory 64 MiB, iterations 1, parallelism 4,
+  salt 16 bytes, key 32 bytes (RFC 9106 second recommended option).
+  Policy: min length 8, max 128, no composition rules. Optional
+  check against a bundled top-10k common-password list (on by default).
+  Rehash transparently on successful login when params changed.
+  Hashing runs through a semaphore (default 4 concurrent) to bound memory.
+
+4. STRATEGIES
+-------------
+4.1 Session (cookie, server-side)
+  - Session ID: 32 bytes crypto/rand, base64url in cookie.
+  - Stored: sha256(id), user_id, created_at, last_seen_at, expires_at,
+    user_agent, ip. Table sessions / collection sessions.
+  - Cookie: name "semii_session", HttpOnly, Secure (except development),
+    SameSite=Lax, Path=/.
+  - Idle timeout 7d, absolute lifetime 30d. last_seen_at updated at most
+    once per minute.
+  - Rotate the session ID on login and on privilege change.
+  - CSRF: for unsafe methods with a session cookie, require
+    Sec-Fetch-Site in {same-origin, none} or an Origin matching the
+    allowed origins list. Otherwise 403 csrf_rejected.
+  - Logout deletes the session row and expires the cookie.
+
+4.2 JWT (bearer)
+  - Access token: JWT, HS256 default (EdDSA optional via config),
+    lifetime 15m, claims sub, iat, nbf, exp, iss, aud, jti, roles.
+    Parser restricts to the configured algorithm (no "alg" trust),
+    leeway 30s, validates iss and aud.
+  - Refresh token: opaque 32 random bytes, stored hashed with family_id,
+    expires 30d, single use. Rotation on every refresh.
+    Reuse of a consumed refresh token revokes the whole family
+    (ErrTokenReused, 401).
+  - Header: Authorization: Bearer <access>.
+  - AUTH_JWT_SECRET must be >= 32 bytes (boot error otherwise).
+
+4.3 API keys
+  - Format: sk_<env>_<prefix>_<secret>, prefix 8 chars, secret 32 bytes
+    base62. Shown once at creation.
+  - Stored: prefix (indexed), sha256(secret), name, owner_id, scopes,
+    expires_at (nullable), last_used_at, revoked_at.
+  - Accepted from: Authorization: Bearer sk_... or X-API-Key header.
+  - Lookup by prefix, then constant-time hash compare.
+  - last_used_at updated at most every 5 minutes.
+  - Principal.Kind = "apikey", Scopes from the record.
+
+5. GENERATED FLOWS (semii generate auth)
+----------------------------------------
+Files: internal/auth/{handler.go, service.go, repo_*.go, routes.go,
+mailer.go, *_test.go} plus migrations for users, sessions,
+refresh_tokens, api_keys, auth_tokens (only those needed).
+
+users table: id, email (unique, lowercased), password_hash, roles,
+email_verified_at, created_at, updated_at, failed_logins, locked_until.
+
+Endpoints (all Public unless noted):
+  POST /auth/register          -> 201 (+ verification email)
+  POST /auth/login             -> session cookie or {access_token,
+                                  refresh_token, expires_in}
+  POST /auth/logout            (Authenticated) -> 204
+  POST /auth/refresh           (jwt only) -> new token pair
+  POST /auth/password/forgot   -> ALWAYS 202
+  POST /auth/password/reset    token + new password -> 204, revokes all
+                                  sessions/refresh families of the user
+  POST /auth/email/verify      token -> 204
+  POST /auth/email/resend      (Authenticated) -> 202
+  GET  /auth/me                (Authenticated) -> current user
+  POST /auth/api-keys          (Authenticated, apikey strategy) -> 201
+  GET  /auth/api-keys          (Authenticated)
+  DELETE /auth/api-keys/{id}   (Authenticated) -> 204
+
+One-time tokens (reset/verify): 32 random bytes, stored as sha256,
+single use, reset TTL 1h, verify TTL 24h, delivered in a link built from
+AUTH_APP_URL.
+
+Login protection (in-memory, single instance in v1):
+  - Per IP: 20 attempts/min -> 429 with Retry-After
+  - Per account: 5 consecutive failures -> locked_until = now + backoff
+    (1m, 5m, 15m, capped 1h). Response stays "invalid credentials".
+  - Dummy hash verification when the user doesn't exist (timing parity).
+
+Email delivery:
+  type Sender interface {
+      SendVerification(ctx context.Context, to, link string) error
+      SendPasswordReset(ctx context.Context, to, link string) error
+  }
+  v1 ships LogSender (dev/test) and SMTPSender (net/smtp, STARTTLS
+  required). The full mail package arrives in v2.
+
+6. CONFIG (auth.Config, prefix AUTH_)
+-------------------------------------
+  AUTH_STRATEGIES, AUTH_APP_URL, AUTH_JWT_SECRET, AUTH_JWT_ISSUER,
+  AUTH_JWT_AUDIENCE, AUTH_ACCESS_TTL (15m), AUTH_REFRESH_TTL (720h),
+  AUTH_SESSION_IDLE (168h), AUTH_SESSION_ABSOLUTE (720h),
+  AUTH_REQUIRE_VERIFIED_EMAIL (false), AUTH_STRICT_ROUTES (true)
+
+7. SECURITY TEST CHECKLIST (must pass before v1.0)
+--------------------------------------------------
+  [ ] alg=none and alg-switching JWTs rejected
+  [ ] expired, not-yet-valid, wrong iss/aud tokens rejected
+  [ ] refresh reuse revokes family
+  [ ] no user enumeration via register/login/forgot responses or timing
+  [ ] session fixation impossible (rotation on login)
+  [ ] CSRF rejected for cross-site cookie requests
+  [ ] reset/verify tokens single use and expiring
+  [ ] password reset revokes all sessions
+  [ ] API key compare is constant time; revoked/expired keys rejected
+  [ ] no secrets in logs (Secret type, redaction tests)
+  [ ] route without policy fails boot and `semii routes`

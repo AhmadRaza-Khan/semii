@@ -1,0 +1,92 @@
+SEMII v1 SPECIFICATION
+09 - OPERATIONS (packages server, logx + generated deploy files)
+======================================================================
+
+1. SERVER LIFECYCLE (package server)
+------------------------------------
+  func Run(ctx context.Context, c Config) error
+  type Config struct {
+      Addr       string
+      Handler    http.Handler
+      Logger     *slog.Logger
+      Health     Health
+      Closers    []io.Closer         // closed in reverse order
+      Timeouts   Timeouts
+      DrainDelay time.Duration       // default 5s
+      ShutdownTimeout time.Duration  // default 30s
+  }
+  Timeouts defaults: ReadHeader 10s, Read 30s, Write 60s, Idle 120s.
+
+Shutdown sequence on SIGINT/SIGTERM (or ctx cancel):
+  1. /readyz starts returning 503
+  2. wait DrainDelay (lets load balancers stop routing)
+  3. http.Server.Shutdown with ShutdownTimeout
+  4. close Closers in reverse order, collecting errors (errors.Join)
+  5. return; second signal forces immediate exit(1)
+Listen errors other than http.ErrServerClosed are returned.
+
+2. HEALTH
+---------
+  type Check func(ctx context.Context) error
+  type Health struct { Checks map[string]Check; Timeout time.Duration } // 2s
+
+  GET /healthz  liveness, always 200 {"status":"ok","version":"..."}
+  GET /readyz   runs checks concurrently with Timeout
+                200 {"status":"ok","checks":{"db":"ok"}}
+                503 {"status":"unavailable","checks":{"db":"timeout"}}
+Both are Public, excluded from request logs, mounted by server.Run
+outside the app middleware chain (no auth, no body limit).
+Version comes from -ldflags "-X github.com/semii/semii/server.Version=..."
+or debug.ReadBuildInfo VCS revision.
+
+3. LOGGING (package logx)
+-------------------------
+  func New(env, level string) *slog.Logger
+    development: text handler, colored, source off
+    production/test: JSON handler to stdout
+  func FromContext(ctx) *slog.Logger   // logger enriched with request_id
+  web.Logger middleware stores the enriched logger in ctx.
+  Secrets: config.Secret implements slog.LogValuer -> "[redacted]".
+  Authorization, Cookie and X-API-Key headers are never logged.
+
+4. DOCKER
+---------
+Dockerfile (generated):
+  - builder: golang:<ver>-alpine, go mod download cached, CGO_ENABLED=0,
+    -trimpath, -ldflags "-s -w -X ...Version=$VERSION"
+  - runtime: gcr.io/distroless/static-debian12:nonroot
+  - copies only the binary (migrations are embedded)
+  - EXPOSE 8080, USER nonroot, no shell
+docker-compose.yml: app + db service (postgres/mysql/mongo replica set)
+with healthchecks and a named volume. SQLite projects get app only.
+
+5. CI (.github/workflows/ci.yml, generated)
+-------------------------------------------
+Jobs on push/PR:
+  - gofmt check, go vet, staticcheck
+  - govulncheck
+  - go test -race with DB service container (TEST_DATABASE_URL)
+  - go build ./cmd/api
+  - docker build (no push) on main
+Optional deploy.yml (generated with --deploy=ssh): build, scp binary,
+run migrations, restart via systemctl or pm2. Secrets via GitHub secrets.
+
+6. DEPLOY TEMPLATES (deploy/)
+-----------------------------
+systemd/<app>.service:
+  Type=simple, User=<app>, EnvironmentFile=/etc/<app>/env,
+  ExecStart=/opt/<app>/api, Restart=on-failure, RestartSec=2,
+  TimeoutStopSec=40 (> DrainDelay + ShutdownTimeout),
+  NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp.
+pm2/ecosystem.config.js:
+  single fork instance, kill_timeout 40000, env_file, autorestart.
+nginx/<app>.conf:
+  reverse proxy to 127.0.0.1:8080, X-Forwarded-For/Proto/Request-ID,
+  client_max_body_size matching HTTP_MAX_BODY_BYTES, proxy timeouts,
+  certbot-ready server block. Reminder comment: add 127.0.0.1/32 to
+  HTTP_TRUSTED_PROXIES.
+
+7. MAKEFILE (thin aliases)
+--------------------------
+  dev, build, test, test-short, lint, migrate-up, migrate-down, seed,
+  docker-up, docker-down

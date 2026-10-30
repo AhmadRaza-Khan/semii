@@ -1,0 +1,133 @@
+SEMII v1 SPECIFICATION
+02 - PROJECT LAYOUT
+======================================================================
+
+1. GENERATED APPLICATION (semii new shop --db postgres --auth jwt)
+-----------------------------------------------------------------
+shop/
+  cmd/api/main.go              entrypoint: load config, build app, run
+  internal/
+    app/
+      app.go                   explicit wiring (constructors only)
+      routes.go                route registration, policy defaults
+    config/config.go           typed Config struct
+    auth/                      generated auth flows (owned code)
+    middleware/                user middleware
+    factory/                   test factories
+    <resource>/                one package per resource
+  db/
+    migrations/                goose SQL migrations
+    queries/                   sqlc query files
+    sqlc/                      sqlc output (DO NOT EDIT)
+    seeds/seed.go
+  deploy/
+    systemd/shop.service
+    pm2/ecosystem.config.js
+    nginx/shop.conf
+  testdata/
+  .github/workflows/ci.yml
+  Dockerfile
+  docker-compose.yml
+  .env.example
+  .semii.yaml
+  sqlc.yaml
+  Makefile                     thin aliases: dev, test, lint, migrate
+  go.mod
+
+2. WIRING (internal/app/app.go, generated)
+------------------------------------------
+  type App struct {
+      Config  config.Config
+      Log     *slog.Logger
+      DB      *pgxpool.Pool
+      Handler http.Handler
+      Router  *web.Router
+  }
+
+  func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
+      pool, err := pgxdb.Open(ctx, cfg.DatabaseURL, pgxdb.Options{})
+      if err != nil {
+          return nil, fmt.Errorf("open db: %w", err)
+      }
+      q := sqlc.New(pool)
+
+      // semii:wiring:start
+      orders := order.NewHandler(order.NewService(order.NewSQLRepo(q, pool)))
+      authH, authN := auth.Wire(cfg.Auth, q, pool, log)
+      // semii:wiring:end
+
+      r := web.NewRouter(web.Options{Logger: log})
+      registerRoutes(r, routeDeps{Orders: orders, Auth: authH})
+
+      if err := r.Verify(); err != nil { // deny-by-default check
+          return nil, err
+      }
+
+      h := web.Chain(r,
+          web.RequestID(), web.RealIP(cfg.HTTP.TrustedProxies),
+          web.Logger(log), web.Recover(log),
+          web.SecurityHeaders(cfg.Env), web.CORS(cfg.HTTP.CORS),
+          web.BodyLimit(cfg.HTTP.MaxBodyBytes), web.Timeout(cfg.HTTP.HandlerTimeout),
+          web.Gzip(), auth.Middleware(authN...),
+      )
+      return &App{Config: cfg, Log: log, DB: pool, Handler: h, Router: r}, nil
+  }
+
+  func (a *App) Close() error { a.DB.Close(); return nil }
+
+3. ENTRYPOINT (cmd/api/main.go, generated)
+------------------------------------------
+  func main() {
+      if err := run(); err != nil {
+          fmt.Fprintln(os.Stderr, err)
+          os.Exit(1)
+      }
+  }
+
+  func run() error {
+      cfg, err := config.Load[config.Config]()
+      if err != nil { return err }
+      log := logx.New(cfg.Env, cfg.LogLevel)
+      ctx := context.Background()
+      a, err := app.New(ctx, cfg, log)
+      if err != nil { return err }
+      return server.Run(ctx, server.Config{
+          Addr: cfg.HTTP.Addr, Handler: a.Handler, Logger: log,
+          Health: server.Health{Checks: map[string]server.Check{"db": a.DB.Ping}},
+          Closers: []io.Closer{a},
+      })
+  }
+
+4. MODULE PATTERN
+-----------------
+A "module" is a plain Go package exposing:
+  func Register(r *web.Router, h *Handler)
+No metadata, no registry. app.go/routes.go call it explicitly.
+
+5. FRAMEWORK REPOSITORY LAYOUT
+------------------------------
+semii/
+  cmd/semii/          CLI (main + commands)
+  internal/gen/       generator engine, naming, field parser
+  templates/          embedded templates per db x auth
+    common/ postgres/ mysql/ sqlite/ mongo/ auth/
+  web/                router, middleware, JSON, errors, pagination
+  config/             typed config loader
+  auth/               authenticators, policies, password, tokens
+  db/
+    pgxdb/            pgx pool open, WithTx, error mapping
+    sqldb/            database/sql (mysql, sqlite) open, WithTx, mapping
+    mongodb/          client open, WithTx (session), error mapping
+    migrate/          goose wrapper
+  validate/           validator wrapper and field errors
+  server/             Run, graceful shutdown, health
+  logx/               slog setup helpers
+  testkit/            HTTP client, assertions, test DBs
+  examples/
+    shop-postgres/
+    notes-mongo/
+  docs/
+
+Dependency rule: web, config, validate, logx, server depend only on the
+stdlib plus their single named dependency (validator for validate). auth
+depends on web. No package imports the CLI or templates.
