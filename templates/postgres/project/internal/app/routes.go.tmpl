@@ -1,0 +1,18 @@
+package app
+
+import (
+	"{{.Semii}}/web"
+)
+
+// routeDeps carries the handlers registerRoutes mounts.
+type routeDeps struct {
+	// semii:deps:start
+	// semii:deps:end
+}
+
+// registerRoutes mounts every module. Routes are deny-by-default: each must
+// be marked Public() or Require(...), or the app refuses to boot.
+func registerRoutes(r *web.Router, d routeDeps) {
+	// semii:routes:start
+	// semii:routes:end
+}

@@ -1,0 +1,19 @@
+// Package db embeds the SQL migrations so the binary carries its schema.
+package db
+
+import (
+	"embed"
+	"io/fs"
+)
+
+//go:embed migrations/*.sql
+var files embed.FS
+
+// Migrations returns the migrations with the .sql files at the root.
+func Migrations() fs.FS {
+	sub, err := fs.Sub(files, "migrations")
+	if err != nil {
+		panic(err) // the directory is embedded at build time
+	}
+	return sub
+}

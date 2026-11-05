@@ -1,0 +1,109 @@
+// Package app wires the application together with explicit constructor
+// calls. Generators add resources between the semii:wiring markers.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	appdb "{{.Module}}/db"
+	"{{.Module}}/internal/config"
+	"{{.Semii}}/db/migrate"
+	"{{.Semii}}/db/pgxdb"
+	"{{.Semii}}/web"
+)
+
+// App is the assembled application.
+type App struct {
+	Config  config.Config
+	Log     *slog.Logger
+	DB      *pgxpool.Pool
+	Handler http.Handler
+	Router  *web.Router
+}
+
+// New opens the database and builds the application.
+func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
+	pool, err := pgxdb.Open(ctx, cfg.DatabaseURL.Reveal(), pgxdb.Options{MaxConns: cfg.DB.MaxConns})
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	if err := autoMigrate(ctx, cfg, pool, log); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	a, err := Build(cfg, log, pool)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return a, nil
+}
+
+// Build assembles the application around an open pool. Tests call it with a
+// per-test database.
+func Build(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) (*App, error) {
+	if err := cfg.HTTP.CORS.Validate(); err != nil {
+		return nil, err
+	}
+	r := newRouter(cfg, log, pool)
+	if err := r.Verify(); err != nil { // deny-by-default check
+		return nil, err
+	}
+	h := web.Chain(r,
+		web.RequestID(), web.RealIP(cfg.HTTP.TrustedProxies),
+		web.Logger(log), web.Recover(log),
+		web.SecurityHeaders(cfg.Env), web.CORS(cfg.HTTP.CORS),
+		web.BodyLimit(cfg.HTTP.MaxBodyBytes), web.Timeout(cfg.HTTP.HandlerTimeout),
+		web.Gzip(),
+	)
+	return &App{Config: cfg, Log: log, DB: pool, Handler: h, Router: r}, nil
+}
+
+func newRouter(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) *web.Router {
+	d := routeDeps{}
+	// semii:wiring:start
+	// semii:wiring:end
+
+	r := web.NewRouter(web.Options{Logger: log, Env: cfg.Env})
+	registerRoutes(r, d)
+	return r
+}
+
+// Routes lists every route without a database, for `semii routes`. The
+// error reports routes without a policy.
+func Routes() ([]web.RouteInfo, error) {
+	r := newRouter(config.Config{Env: "development"}, slog.New(slog.DiscardHandler), nil)
+	return r.Routes(), r.Verify()
+}
+
+// Close releases the database pool.
+func (a *App) Close() error {
+	if a.DB != nil {
+		a.DB.Close()
+	}
+	return nil
+}
+
+// autoMigrate applies pending migrations when DB_AUTO_MIGRATE=true.
+func autoMigrate(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) error {
+	if !cfg.DB.AutoMigrate {
+		return nil
+	}
+	if cfg.Env == "production" && !cfg.DB.AutoMigrateProduction {
+		return errors.New("DB_AUTO_MIGRATE is refused in production; set DB_AUTO_MIGRATE_PRODUCTION=true to allow it")
+	}
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer sqlDB.Close()
+	applied, err := migrate.Up(ctx, sqlDB, appdb.Migrations())
+	if err != nil {
+		return err
+	}
+	log.Info("migrations applied", "count", len(applied))
+	return nil
+}

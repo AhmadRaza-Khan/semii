@@ -1,0 +1,20 @@
+package middleware
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func Test{{.Name}}CallsNext(t *testing.T) {
+	called := false
+	h := {{.Name}}(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !called || rec.Code != http.StatusTeapot {
+		t.Fatalf("next called=%v status=%d", called, rec.Code)
+	}
+}

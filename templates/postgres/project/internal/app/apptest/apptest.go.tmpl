@@ -1,0 +1,39 @@
+// Package apptest builds the real application for integration tests.
+package apptest
+
+import (
+	"log/slog"
+	"testing"
+
+	appdb "{{.Module}}/db"
+	"{{.Module}}/internal/app"
+	"{{.Module}}/internal/config"
+	semiiconfig "{{.Semii}}/config"
+	"{{.Semii}}/testkit"
+)
+
+// New builds the application on a fresh, migrated database and returns it
+// with an in-process HTTP client. The test is skipped in -short mode or
+// when TEST_DATABASE_URL is unset.
+func New(t testing.TB) (*app.App, *testkit.Client) {
+	t.Helper()
+	pool := testkit.Postgres(t, testkit.WithMigrations(appdb.Migrations()))
+	cfg, err := config.Load(
+		semiiconfig.WithEnv("test"),
+		semiiconfig.WithDir(t.TempDir()),
+		semiiconfig.WithLookup(func(key string) (string, bool) {
+			if key == "DATABASE_URL" {
+				return "postgres://unused", true // the per-test pool above is used instead
+			}
+			return "", false
+		}),
+	)
+	if err != nil {
+		t.Fatalf("apptest: config: %v", err)
+	}
+	a, err := app.Build(cfg, slog.New(slog.DiscardHandler), pool)
+	if err != nil {
+		t.Fatalf("apptest: build: %v", err)
+	}
+	return a, testkit.NewClient(t, a.Handler)
+}

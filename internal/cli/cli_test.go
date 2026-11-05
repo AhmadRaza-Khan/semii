@@ -1,0 +1,147 @@
+package cli
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func run(t *testing.T, dir string, env map[string]string, args ...string) (int, string, string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code := Run(args, &Env{
+		Stdout: &out, Stderr: &errOut, Dir: dir,
+		Getenv: func(k string) string { return env[k] },
+	})
+	return code, out.String(), errOut.String()
+}
+
+func TestUsageAndUnknown(t *testing.T) {
+	if code, out, _ := run(t, t.TempDir(), nil); code != ExitUser || !strings.Contains(out, "Commands:") {
+		t.Errorf("no args: %d %q", code, out)
+	}
+	if code, _, _ := run(t, t.TempDir(), nil, "help"); code != ExitOK {
+		t.Errorf("help: %d", code)
+	}
+	if code, _, errOut := run(t, t.TempDir(), nil, "frobnicate"); code != ExitUser || !strings.Contains(errOut, "unknown command") {
+		t.Errorf("unknown: %d %q", code, errOut)
+	}
+	if code, out, _ := run(t, t.TempDir(), nil, "version"); code != ExitOK || !strings.Contains(out, Version) {
+		t.Errorf("version: %d %q", code, out)
+	}
+}
+
+func TestUserErrors(t *testing.T) {
+	dir := t.TempDir()
+	cases := [][]string{
+		{"new"},
+		{"new", "a/b"},
+		{"new", "shop", "--auth", "jwt"},
+		{"new", "shop", "--db", "mongo", "--auth", "none"},
+		{"new", "shop", "--bogus"},
+		{"generate"},
+		{"g", "wat"},
+		{"g", "auth"},
+		{"g", "resource"},
+		{"g", "resource", "Order"}, // not in a project
+		{"routes"},
+		{"migrate"},
+		{"db", "seed"},
+		{"dev"},
+	}
+	for _, args := range cases {
+		if code, _, _ := run(t, dir, nil, args...); code != ExitUser {
+			t.Errorf("%v: exit %d, want %d", args, code, ExitUser)
+		}
+	}
+}
+
+func TestNewDryRunAndConflicts(t *testing.T) {
+	dir := t.TempDir()
+	code, out, errOut := run(t, dir, nil, "new", "shop", "--auth", "none", "--dry-run")
+	if code != ExitOK || !strings.Contains(out, "internal/app/app.go (dry run)") {
+		t.Fatalf("%d %s %s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shop")); err == nil {
+		t.Error("dry run created the project")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "taken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "taken", "x"), nil, 0o644)
+	if code, _, errOut := run(t, dir, nil, "new", "taken", "--auth", "none"); code != ExitUser || !strings.Contains(errOut, "not empty") {
+		t.Errorf("%d %s", code, errOut)
+	}
+}
+
+func TestParseInterleaved(t *testing.T) {
+	e := &Env{}
+	rest := e.globalFlags([]string{"g", "--verbose", "resource", "Order", "--dry-run", "a:string", "--no-color", "--force"})
+	if !e.Verbose || !e.DryRun || !e.NoColor || !e.Force || strings.Join(rest, " ") != "g resource Order a:string" {
+		t.Errorf("%+v %v", e, rest)
+	}
+}
+
+func TestGoAtLeast(t *testing.T) {
+	for v, want := range map[string]bool{"go1.24.3": true, "go1.25": true, "go2.0": true, "go1.23.9": false, "go1.24rc1": true, "devel": false} {
+		if goAtLeast(v, 1, 24) != want {
+			t.Errorf("%s", v)
+		}
+	}
+}
+
+// TestEndToEnd drives the real workflow: new, generate, sqlc, build, vet,
+// tests against Postgres, migrate and routes. It needs sqlc on PATH and
+// TEST_DATABASE_URL, and runs only with SEMII_E2E=1.
+func TestEndToEnd(t *testing.T) {
+	if os.Getenv("SEMII_E2E") != "1" {
+		t.Skip("set SEMII_E2E=1 (with sqlc on PATH and TEST_DATABASE_URL) to run")
+	}
+	if _, err := exec.LookPath("sqlc"); err != nil {
+		t.Fatal("sqlc not on PATH")
+	}
+	_, file, _, _ := runtime.Caller(0)
+	framework := filepath.Join(filepath.Dir(file), "..", "..")
+	env := map[string]string{EnvLocalSemii: framework}
+	dir := t.TempDir()
+
+	must := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		code, out, errOut := run(t, dir, env, args...)
+		if code != ExitOK {
+			t.Fatalf("semii %s: exit %d\n%s\n%s", strings.Join(args, " "), code, out, errOut)
+		}
+		return out
+	}
+	for _, id := range []string{"uuid", "bigint"} {
+		t.Run(id, func(t *testing.T) {
+			must(t, dir, "new", "app"+id, "--auth", "none", "--id", id, "--no-git")
+			root := filepath.Join(dir, "app"+id)
+			must(t, root, "g", "resource", "Customer", "name:string:min=2", "email:string:unique", "tier:string:default=basic:index")
+			must(t, root, "g", "resource", "Order",
+				"customer:ref:Customer", "backup:ref:Customer:null", "total:decimal:min=0", "discount:decimal:null",
+				"qty:int:min=1:max=100", "big:int64:null:unique", "paid:bool:default=false", "score:float:null:index",
+				"due:date", "due_on:date:null:index", "placed_at:time", "at2:time:null", "meta:json", "meta2:json:null",
+				"ref:uuid:null:index", "status:string:max=20:default=open", "notes:text:null", "--soft-delete")
+			must(t, root, "g", "middleware", "audit")
+			if out := must(t, root, "routes"); !strings.Contains(out, "order.(*Handler).List") {
+				t.Errorf("routes:\n%s", out)
+			}
+			checks := [][]string{{"go", "vet", "./..."}, {"go", "test", "-race", "-count=1", "./..."}}
+			if _, err := exec.LookPath("staticcheck"); err == nil {
+				checks = append(checks, []string{"staticcheck", "./..."})
+			}
+			for _, args := range checks {
+				cmd := exec.Command(args[0], args[1:]...)
+				cmd.Dir = root
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: %v\n%s", strings.Join(args, " "), err, out)
+				}
+			}
+		})
+	}
+}

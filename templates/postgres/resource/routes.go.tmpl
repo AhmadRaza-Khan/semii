@@ -1,0 +1,21 @@
+package {{.Pkg}}
+
+import (
+	"{{.Semii}}/web"
+)
+
+// Register mounts the {{.PluralVar}} endpoints under {{.Route}}.
+func Register(r *web.Router, h *Handler) {
+{{- if .Public}}
+	// Public: anyone can call these endpoints. Replace Public() with
+	// Require(...) once authentication is set up.
+	g := r.Group("{{.Route}}").Public()
+{{- else}}
+	g := r.Group("{{.Route}}").Require(auth.Authenticated())
+{{- end}}
+	g.HandleFunc("GET /", h.List)
+	g.HandleFunc("POST /", h.Create)
+	g.HandleFunc("GET /{id}", h.Get)
+	g.HandleFunc("PATCH /{id}", h.Update)
+	g.HandleFunc("DELETE /{id}", h.Delete)
+}

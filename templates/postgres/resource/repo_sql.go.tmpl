@@ -1,0 +1,137 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
+	"{{.Module}}/db/sqlc"
+	"{{.Semii}}/db"
+	"{{.Semii}}/db/pgxdb"
+	"{{.Semii}}/web"
+)
+
+// SQLRepo implements Repository on Postgres using the sqlc queries in
+// db/queries/{{.Table}}.sql.
+type SQLRepo struct {
+	q *sqlc.Queries
+}
+
+// NewSQLRepo returns a repository using q.
+func NewSQLRepo(q *sqlc.Queries) *SQLRepo { return &SQLRepo{q: q} }
+
+// WithTx returns a copy of the repository that runs inside tx.
+func (r *SQLRepo) WithTx(tx pgx.Tx) *SQLRepo { return &SQLRepo{q: r.q.WithTx(tx)} }
+
+var _ Repository = (*SQLRepo)(nil)
+
+func fromRow(row sqlc.{{.SqlcStruct}}) {{.Name}} {
+	return {{.Name}}{
+		ID: row.ID,
+{{- range .Fields}}
+		{{.GoName}}: {{.FromSqlc (printf "row.%s" .SqlcName)}},
+{{- end}}
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
+	}
+}
+
+// Create inserts a {{.Var}}.
+func (r *SQLRepo) Create(ctx context.Context, in CreateInput) ({{.Name}}, error) {
+{{- range .Fields}}{{if .HasDefault}}
+	def{{.GoName}} := {{.DefaultGo}}
+	if in.{{.GoName}} != nil {
+		def{{.GoName}} = *in.{{.GoName}}
+	}
+{{- end}}{{end}}
+	t := now()
+	row, err := r.q.Create{{.Name}}(ctx, sqlc.Create{{.Name}}Params{
+{{- if .UUID}}
+		ID: uuid.Must(uuid.NewV7()),
+{{- end}}
+{{- range .Fields}}
+		{{.SqlcName}}: {{.CreateParam}},
+{{- end}}
+		CreatedAt: t,
+		UpdatedAt: t,
+	})
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo create: %w", pgxdb.MapError(err))
+	}
+	return fromRow(row), nil
+}
+
+// Get returns the {{.Var}} with the given id.
+func (r *SQLRepo) Get(ctx context.Context, id {{.IDGo}}) ({{.Name}}, error) {
+	row, err := r.q.Get{{.Name}}(ctx, id)
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo get: %w", pgxdb.MapError(err))
+	}
+	return fromRow(row), nil
+}
+
+// List returns one page of {{.PluralVar}}, newest first, and the cursor of
+// the next page (nil on the last page).
+func (r *SQLRepo) List(ctx context.Context, f ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error) {
+	arg := sqlc.List{{.Plural}}Params{
+		Lim: int32(p.Limit + 1),
+{{- range .Filters}}
+		{{.SqlcName}}: {{.ToSqlc (printf "f.%s" .GoName) true}},
+{{- end}}
+	}
+	if p.Cursor != nil {
+		var at time.Time
+		var id {{.IDGo}}
+		if err := p.Cursor.Scan(&at, &id); err != nil {
+			return nil, nil, err
+		}
+		arg.AfterCreatedAt, arg.AfterID = &at, &id
+	}
+	rows, err := r.q.List{{.Plural}}(ctx, arg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("{{.Var}} repo list: %w", pgxdb.MapError(err))
+	}
+	items := make([]{{.Name}}, len(rows))
+	for i, row := range rows {
+		items[i] = fromRow(row)
+	}
+	page := web.NewCursorPage(items, p.Limit, func(o {{.Name}}) []any { return []any{o.CreatedAt, o.ID} })
+	return page.Data, page.NextCursor, nil
+}
+
+// Update applies the non-nil fields of in.
+func (r *SQLRepo) Update(ctx context.Context, id {{.IDGo}}, in UpdateInput) ({{.Name}}, error) {
+	row, err := r.q.Update{{.Name}}(ctx, sqlc.Update{{.Name}}Params{
+		ID: id,
+{{- range .Fields}}
+{{- if .Null}}
+		Set{{.SqlcName}}: in.{{.GoName}}.Set,
+{{- end}}
+		{{.SqlcName}}: {{.UpdateParam}},
+{{- end}}
+		UpdatedAt: now(),
+	})
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo update: %w", pgxdb.MapError(err))
+	}
+	return fromRow(row), nil
+}
+
+// Delete {{if .SoftDelete}}soft-deletes{{else}}deletes{{end}} the {{.Var}} with the given id.
+func (r *SQLRepo) Delete(ctx context.Context, id {{.IDGo}}) error {
+{{- if .SoftDelete}}
+	n, err := r.q.Delete{{.Name}}(ctx, sqlc.Delete{{.Name}}Params{ID: id, DeletedAt: now()})
+{{- else}}
+	n, err := r.q.Delete{{.Name}}(ctx, id)
+{{- end}}
+	if err != nil {
+		return fmt.Errorf("{{.Var}} repo delete: %w", pgxdb.MapError(err))
+	}
+	if n == 0 {
+		return fmt.Errorf("{{.Var}} repo delete: %w", db.ErrNotFound)
+	}
+	return nil
+}

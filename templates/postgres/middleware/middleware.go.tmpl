@@ -1,0 +1,13 @@
+// Package middleware holds the application's own HTTP middleware.
+package middleware
+
+import "net/http"
+
+// {{.Name}} wraps next. Do work before and/or after calling
+// next.ServeHTTP; to stop the request, write a response and return
+// without calling it.
+func {{.Name}}(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+	})
+}
