@@ -14,4 +14,13 @@ var (
 
 	// ErrConflict reports a uniqueness or concurrency conflict.
 	ErrConflict = errors.New("conflict")
+
+	// ErrForeignKey reports a foreign-key violation: a referenced row is
+	// missing, or a row is still referenced.
+	ErrForeignKey = errors.New("foreign key violation")
 )
+
+// Tx marks a transaction handle. It carries no methods: each driver
+// package exposes its concrete type (pgx.Tx, *sql.Tx, a mongo session
+// context), and repositories accept that type in WithTx.
+type Tx interface{}

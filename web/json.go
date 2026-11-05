@@ -73,9 +73,13 @@ func decodeError(err error) error {
 			return &Error{Status: http.StatusBadRequest, Code: "invalid_json",
 				Detail: "request body must be a JSON " + typ.Type.Kind().String(), Err: err}
 		}
+		msg := "must be of type " + typ.Type.String()
+		if typ.Type == dateType {
+			msg = "must be a date in YYYY-MM-DD format"
+		}
 		return &Error{Status: http.StatusBadRequest, Code: "invalid_json",
 			Detail: "field " + field + " has the wrong type", Err: err,
-			Fields: []FieldError{{Field: field, Code: "type", Message: "must be of type " + typ.Type.String()}}}
+			Fields: []FieldError{{Field: field, Code: "type", Message: msg}}}
 	case strings.HasPrefix(err.Error(), "json: unknown field "):
 		name := strings.Trim(strings.TrimPrefix(err.Error(), "json: unknown field "), `"`)
 		return &Error{Status: http.StatusBadRequest, Code: "unknown_field",

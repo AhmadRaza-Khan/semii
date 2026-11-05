@@ -105,6 +105,7 @@ type policySpec struct {
 //
 //	db.ErrNotFound            404 not_found
 //	db.ErrConflict            409 conflict
+//	db.ErrForeignKey          409 foreign_key
 //	ErrUnauthenticated        401 unauthenticated
 //	ErrForbidden              403 forbidden
 //	ErrInvalidCredentials     401 invalid_credentials
@@ -130,6 +131,7 @@ func NewRouter(opts Options) *Router {
 	r := &Router{c: c}
 	r.MapError(db.ErrNotFound, http.StatusNotFound, "not_found")
 	r.MapError(db.ErrConflict, http.StatusConflict, "conflict")
+	r.MapError(db.ErrForeignKey, http.StatusConflict, "foreign_key")
 	r.MapError(ErrUnauthenticated, http.StatusUnauthorized, "unauthenticated")
 	r.MapError(ErrForbidden, http.StatusForbidden, "forbidden")
 	r.MapError(ErrInvalidCredentials, http.StatusUnauthorized, "invalid_credentials")
