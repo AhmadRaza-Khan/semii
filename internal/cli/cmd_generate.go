@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/semii/semii/internal/gen"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
 )
 
 func runGenerate(e *Env, args []string) error {

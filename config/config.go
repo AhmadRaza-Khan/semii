@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/semii/semii/validate"
+	"github.com/AhmadRaza-Khan/semii/validate"
 )
 
 // Environments accepted for SEMII_ENV.

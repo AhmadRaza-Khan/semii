@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/semii/semii/internal/gen"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
 )
 
 // EnvLocalSemii points generated projects at a local framework checkout

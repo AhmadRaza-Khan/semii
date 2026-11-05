@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AhmadRaza-Khan/semii/db"
+	"github.com/AhmadRaza-Khan/semii/db/pgxdb"
+	"github.com/AhmadRaza-Khan/semii/testkit"
 	"github.com/jackc/pgx/v5"
-	"github.com/semii/semii/db"
-	"github.com/semii/semii/db/pgxdb"
-	"github.com/semii/semii/testkit"
 )
 
 func TestMain(m *testing.M) { testkit.Main(m) }

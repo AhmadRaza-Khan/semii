@@ -13,10 +13,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/AhmadRaza-Khan/semii/config"
+	"github.com/AhmadRaza-Khan/semii/db/migrate"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
-	"github.com/semii/semii/config"
-	"github.com/semii/semii/db/migrate"
-	"github.com/semii/semii/internal/gen"
 )
 
 // dbEnv is the slice of the project's configuration the CLI reads itself.

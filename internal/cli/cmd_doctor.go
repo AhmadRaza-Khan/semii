@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/semii/semii/db/migrate"
-	"github.com/semii/semii/internal/gen"
+	"github.com/AhmadRaza-Khan/semii/db/migrate"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
 )
 
 type checkResult struct {

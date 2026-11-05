@@ -19,8 +19,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/semii/semii/db"
-	"github.com/semii/semii/validate"
+	"github.com/AhmadRaza-Khan/semii/db"
+	"github.com/AhmadRaza-Khan/semii/validate"
 )
 
 // HandlerFunc is an HTTP handler that reports failure by returning an error.

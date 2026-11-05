@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/semii/semii/db"
-	"github.com/semii/semii/validate"
+	"github.com/AhmadRaza-Khan/semii/db"
+	"github.com/AhmadRaza-Khan/semii/validate"
 )
 
 func do(t *testing.T, h http.Handler, method, target string, body string, hdr ...string) *httptest.ResponseRecorder {

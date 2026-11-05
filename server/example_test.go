@@ -8,10 +8,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/semii/semii/config"
-	"github.com/semii/semii/logx"
-	"github.com/semii/semii/server"
-	"github.com/semii/semii/web"
+	"github.com/AhmadRaza-Khan/semii/config"
+	"github.com/AhmadRaza-Khan/semii/logx"
+	"github.com/AhmadRaza-Khan/semii/server"
+	"github.com/AhmadRaza-Khan/semii/web"
 )
 
 type Config struct {

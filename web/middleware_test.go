@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/semii/semii/logx"
+	"github.com/AhmadRaza-Khan/semii/logx"
 )
 
 func TestChainOrder(t *testing.T) {

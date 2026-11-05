@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/semii/semii/internal/gen"
-	"github.com/semii/semii/web"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
+	"github.com/AhmadRaza-Khan/semii/web"
 )
 
 func routesMain(p gen.Project) string {

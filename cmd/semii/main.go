@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/semii/semii/internal/cli"
+	"github.com/AhmadRaza-Khan/semii/internal/cli"
 )
 
 func main() {

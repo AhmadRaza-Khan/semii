@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/semii/semii/internal/gen"
-	"github.com/semii/semii/templates"
+	"github.com/AhmadRaza-Khan/semii/internal/gen"
+	"github.com/AhmadRaza-Khan/semii/templates"
 )
 
 // Version is the CLI version, stamped into generated files and .semii.yaml.

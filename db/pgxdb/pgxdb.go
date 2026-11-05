@@ -9,11 +9,11 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/AhmadRaza-Khan/semii/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/semii/semii/db"
 )
 
 // Options tune the pool. Zero values use the defaults below.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/semii/semii/templates"
+	"github.com/AhmadRaza-Khan/semii/templates"
 )
 
 func TestNaming(t *testing.T) {
@@ -240,7 +240,7 @@ func TestPlanNew(t *testing.T) {
 	if _, ok := files["docker-compose.yml"]; ok {
 		t.Error("docker-compose.yml written without Docker")
 	}
-	if !strings.Contains(files["go.mod"], "require github.com/semii/semii v1.2.3") || !strings.Contains(files["go.mod"], "replace github.com/semii/semii => /src/semii") {
+	if !strings.Contains(files["go.mod"], "require github.com/AhmadRaza-Khan/semii v1.2.3") || !strings.Contains(files["go.mod"], "replace github.com/AhmadRaza-Khan/semii => /src/semii") {
 		t.Errorf("go.mod:\n%s", files["go.mod"])
 	}
 	if !strings.Contains(files[".env.example"], "/my_shop?") {

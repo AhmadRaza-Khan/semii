@@ -10,7 +10,7 @@ import (
 )
 
 // SemiiModule is the framework's module path, imported by generated code.
-const SemiiModule = "github.com/semii/semii"
+const SemiiModule = "github.com/AhmadRaza-Khan/semii"
 
 // Resource is the template data for `semii generate resource`.
 type Resource struct {

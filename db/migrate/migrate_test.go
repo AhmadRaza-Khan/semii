@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/AhmadRaza-Khan/semii/db/migrate"
+	"github.com/AhmadRaza-Khan/semii/testkit"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/semii/semii/db/migrate"
-	"github.com/semii/semii/testkit"
 )
 
 func TestMain(m *testing.M) { testkit.Main(m) }

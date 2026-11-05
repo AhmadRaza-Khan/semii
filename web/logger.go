@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/semii/semii/logx"
+	"github.com/AhmadRaza-Khan/semii/logx"
 )
 
 // Logger logs one line per completed request with request_id, method,

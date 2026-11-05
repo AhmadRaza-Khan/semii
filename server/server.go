@@ -20,7 +20,7 @@ import (
 
 // Version is reported by /healthz. Set it at build time with
 //
-//	-ldflags "-X github.com/semii/semii/server.Version=v1.2.3"
+//	-ldflags "-X github.com/AhmadRaza-Khan/semii/server.Version=v1.2.3"
 //
 // When empty, the VCS revision from the build info is used.
 var Version string

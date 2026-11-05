@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/AhmadRaza-Khan/semii/db/migrate"
+	"github.com/AhmadRaza-Khan/semii/db/pgxdb"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/semii/semii/db/migrate"
-	"github.com/semii/semii/db/pgxdb"
 )
 
 // EnvDatabaseURL names the variable pointing tests at a database server,

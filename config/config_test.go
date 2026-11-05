@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AhmadRaza-Khan/semii/web"
 	"github.com/google/uuid"
-	"github.com/semii/semii/web"
 )
 
 type httpConfig struct {

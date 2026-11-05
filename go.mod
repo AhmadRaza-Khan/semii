@@ -1,4 +1,4 @@
-module github.com/semii/semii
+module github.com/AhmadRaza-Khan/semii
 
 go 1.24
 
