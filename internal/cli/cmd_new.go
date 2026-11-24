@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/AhmadRaza-Khan/semii/internal/gen"
@@ -54,8 +56,16 @@ func runNew(e *Env, args []string) error {
 		}
 	}
 
-	plan, _, err := gen.PlanNew(e.renderer(), root, gen.NewOptions{
-		Name: name, Module: *module, DB: *db, ID: *id, Auth: auth,
+	for _, s := range auth {
+		if s != "session" && s != "jwt" && s != "apikey" {
+			return userErr("--auth: unknown strategy %q (session, jwt, apikey or none)", s)
+		}
+	}
+	if slices.Contains(auth, "apikey") && !slices.Contains(auth, "session") && !slices.Contains(auth, "jwt") {
+		return userErr("--auth: apikey needs session or jwt so users can sign in to manage keys")
+	}
+	plan, proj, err := gen.PlanNew(e.renderer(), root, gen.NewOptions{
+		Name: name, Module: *module, DB: *db, ID: *id,
 		Docker: !*noDocker, Version: Version, LocalSemii: local, Now: time.Now(),
 	})
 	if err != nil {
@@ -66,7 +76,15 @@ func runNew(e *Env, args []string) error {
 		return err
 	}
 	if e.DryRun {
+		if len(auth) > 0 {
+			e.printf("  then      semii generate auth --strategy %s (dry run)\n", strings.Join(auth, ","))
+		}
 		return nil
+	}
+	if len(auth) > 0 {
+		if err := e.applyAuth(proj, auth); err != nil {
+			return err
+		}
 	}
 
 	e.printf("  run       go mod tidy\n")

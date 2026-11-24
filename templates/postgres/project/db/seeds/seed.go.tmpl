@@ -17,6 +17,8 @@ type Deps struct {
 // Seed inserts development data. It must be idempotent (upsert by natural
 // key) because it may run more than once.
 func Seed(ctx context.Context, d Deps) error {
-	d.Log.Info("nothing to seed yet; edit db/seeds/seed.go")
+	// semii:seed:start
+	// semii:seed:end
+	d.Log.Info("seed complete")
 	return nil
 }

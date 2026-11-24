@@ -45,41 +45,55 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	return a, nil
 }
 
-// Build assembles the application around an open pool. Tests call it with a
-// per-test database.
+// Build assembles the application around an open pool and checks it is
+// ready to serve. Tests call it with a per-test database.
 func Build(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) (*App, error) {
-	if err := cfg.HTTP.CORS.Validate(); err != nil {
-		return nil, err
-	}
-	r := newRouter(cfg, log, pool)
-	if err := r.Verify(); err != nil { // deny-by-default check
-		return nil, err
-	}
-	h := web.Chain(r,
-		web.RequestID(), web.RealIP(cfg.HTTP.TrustedProxies),
-		web.Logger(log), web.Recover(log),
-		web.SecurityHeaders(cfg.Env), web.CORS(cfg.HTTP.CORS),
-		web.BodyLimit(cfg.HTTP.MaxBodyBytes), web.Timeout(cfg.HTTP.HandlerTimeout),
-		web.Gzip(),
-	)
-	return &App{Config: cfg, Log: log, DB: pool, Handler: h, Router: r}, nil
-}
-
-func newRouter(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) *web.Router {
-	d := routeDeps{}
-	// semii:wiring:start
-	// semii:wiring:end
-
-	r := web.NewRouter(web.Options{Logger: log, Env: cfg.Env})
-	registerRoutes(r, d)
-	return r
+	return newApp(cfg, log, pool, true)
 }
 
 // Routes lists every route without a database, for `semii routes`. The
 // error reports routes without a policy.
 func Routes() ([]web.RouteInfo, error) {
-	r := newRouter(config.Config{Env: "development"}, slog.New(slog.DiscardHandler), nil)
-	return r.Routes(), r.Verify()
+	a, err := newApp(config.Config{Env: "development"}, slog.New(slog.DiscardHandler), nil, false)
+	if err != nil {
+		return nil, err
+	}
+	return a.Router.Routes(), a.Router.Verify()
+}
+
+// newApp wires modules with explicit constructor calls. Generators add
+// lines between the semii:wiring markers.
+func newApp(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, check bool) (*App, error) {
+	d := routeDeps{}
+	var mw []web.Middleware // innermost middleware, after the defaults
+	var problems []error    // configuration errors reported at boot
+	strictRoutes := true    // a route without a policy fails boot
+	// semii:wiring:start
+	// semii:wiring:end
+
+	r := web.NewRouter(web.Options{Logger: log, Env: cfg.Env})
+	registerRoutes(r, d)
+	if check {
+		problems = append(problems, cfg.HTTP.CORS.Validate())
+		if err := r.Verify(); err != nil { // deny-by-default check
+			if strictRoutes {
+				problems = append(problems, err)
+			} else {
+				log.Warn("routes without a policy", "error", err)
+			}
+		}
+		if err := errors.Join(problems...); err != nil {
+			return nil, err
+		}
+	}
+	h := web.Chain(r, append([]web.Middleware{
+		web.RequestID(), web.RealIP(cfg.HTTP.TrustedProxies),
+		web.Logger(log), web.Recover(log),
+		web.SecurityHeaders(cfg.Env), web.CORS(cfg.HTTP.CORS),
+		web.BodyLimit(cfg.HTTP.MaxBodyBytes), web.Timeout(cfg.HTTP.HandlerTimeout),
+		web.Gzip(),
+	}, mw...)...)
+	return &App{Config: cfg, Log: log, DB: pool, Handler: h, Router: r}, nil
 }
 
 // Close releases the database pool.

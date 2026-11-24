@@ -1,0 +1,21 @@
+package auth
+
+import (
+	"errors"
+	"log/slog"
+
+	"{{.Module}}/internal/config"
+	semiiauth "{{.Semii}}/auth"
+)
+
+// newSender delivers account mail over SMTP when SMTP_HOST is set. Without
+// it, links are logged (development and test only: they carry secrets).
+func newSender(cfg config.Config, log *slog.Logger) (semiiauth.Sender, error) {
+	if cfg.SMTP.Host != "" {
+		return semiiauth.SMTPSender{Config: cfg.SMTP}, nil
+	}
+	if cfg.Env == "production" {
+		return nil, errors.New("SMTP_HOST is required in production to send account emails")
+	}
+	return semiiauth.LogSender{Log: log}, nil
+}

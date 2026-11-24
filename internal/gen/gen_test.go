@@ -195,7 +195,6 @@ func TestRenderMatrix(t *testing.T) {
 	}
 	for name, mut := range map[string]func(*Project){
 		"mysql": func(p *Project) { p.DB = "mysql" },
-		"auth":  func(p *Project) { p.Auth = []string{"jwt"} },
 	} {
 		q := p
 		mut(&q)
@@ -251,9 +250,6 @@ func TestPlanNew(t *testing.T) {
 	}
 	if _, _, err := PlanNew(rd, root, NewOptions{Name: "a", Module: "a", DB: "mongo", ID: "uuid"}); err == nil {
 		t.Error("mongo accepted in M3")
-	}
-	if _, _, err := PlanNew(rd, root, NewOptions{Name: "a", Module: "a", DB: "postgres", ID: "uuid", Auth: []string{"jwt"}}); err == nil {
-		t.Error("auth accepted in M3")
 	}
 	if _, _, err := PlanNew(rd, root, NewOptions{Name: "a", Module: "a", DB: "postgres", ID: "int"}); err == nil {
 		t.Error("bad id accepted")
@@ -363,5 +359,56 @@ func TestFormatGoError(t *testing.T) {
 	}
 	if _, err := (Renderer{FS: templates.FS}).Render("missing.tmpl", "x", nil); err == nil {
 		t.Error("missing template rendered")
+	}
+}
+
+func TestPlanAuth(t *testing.T) {
+	rd := Renderer{FS: templates.FS, Version: "vtest"}
+	for _, id := range []string{"uuid", "bigint"} {
+		for _, strategies := range [][]string{{"jwt"}, {"session"}, {"session", "apikey"}, {"jwt", "session", "apikey"}} {
+			root := t.TempDir()
+			p, err := ReadProject(writeProject(t, root, id))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Root = root
+			plan, proj, err := PlanAuth(rd, AuthOptions{Project: p, Strategies: strategies, Version: "vtest", Now: time.Unix(0, 0)})
+			if err != nil {
+				t.Fatalf("%s %v: %v", id, strategies, err)
+			}
+			if strings.Join(proj.Auth, ",") != strings.Join(strategies, ",") {
+				t.Errorf("project auth %v", proj.Auth)
+			}
+			for _, c := range plan.Changes {
+				if c.Action == Modify && c.Content == nil {
+					t.Errorf("%s: manual edit needed: %s", c.Path, c.Note)
+				}
+			}
+		}
+	}
+
+	root := t.TempDir()
+	p, _ := ReadProject(writeProject(t, root, "uuid"))
+	p.Root = root
+	for name, strategies := range map[string][]string{
+		"unknown":      {"ldap"},
+		"apikey alone": {"apikey"},
+	} {
+		if _, _, err := PlanAuth(rd, AuthOptions{Project: p, Strategies: strategies}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	withJWT := p
+	withJWT.Auth = []string{"jwt"}
+	if _, _, err := PlanAuth(rd, AuthOptions{Project: withJWT, Strategies: []string{"jwt"}}); err == nil {
+		t.Error("re-adding a strategy accepted")
+	}
+	mysql := p
+	mysql.DB = "mysql"
+	if _, _, err := PlanAuth(rd, AuthOptions{Project: mysql, Strategies: []string{"jwt"}}); err == nil {
+		t.Error("mysql accepted")
+	}
+	if v := migrationVersions(root, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), 3); strings.Join(v, ",") != "20240101000000,20240101000001,20240101000002" {
+		t.Errorf("%v", v)
 	}
 }

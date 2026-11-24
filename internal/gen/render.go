@@ -29,10 +29,11 @@ type Renderer struct {
 }
 
 var funcs = template.FuncMap{
-	"quote": strconv.Quote,
-	"join":  strings.Join,
-	"lower": strings.ToLower,
-	"camel": Camel,
+	"quote":        strconv.Quote,
+	"join":         strings.Join,
+	"lower":        strings.ToLower,
+	"camel":        Camel,
+	"strategyCtor": func(s string) string { return strategyCtors[s] },
 	// tag builds a struct tag from key/value pairs, skipping empty values:
 	// {{tag "json" "id" "validate" ""}} -> `json:"id"`
 	"tag": func(parts ...string) string {
@@ -93,7 +94,8 @@ func numbered(src []byte) string {
 	return strings.Join(lines, "\n")
 }
 
-// AddImports adds import paths to a Go source file and reformats it.
+// AddImports adds import paths ("path" or "name path") to a Go source file
+// and reformats it.
 func AddImports(filename string, src []byte, paths ...string) ([]byte, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
@@ -101,7 +103,12 @@ func AddImports(filename string, src []byte, paths ...string) ([]byte, error) {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
 	for _, p := range paths {
-		astutil.AddImport(fset, f, p)
+		// "name path" adds a named import.
+		if name, path, ok := strings.Cut(p, " "); ok {
+			astutil.AddNamedImport(fset, f, name, path)
+		} else {
+			astutil.AddImport(fset, f, p)
+		}
 	}
 	var buf bytes.Buffer
 	cfg := printer.Config{Mode: printer.UseSpaces | printer.TabIndent, Tabwidth: 8}

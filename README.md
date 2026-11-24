@@ -11,7 +11,7 @@ through code generation, never runtime magic. The spec lives in
 | M1 | web core: router, groups, error handlers, problem+json, JSON, middleware, pagination | done |
 | M2 | config, server, logx | done |
 | M3 | generator engine + Postgres (`semii new`, `generate resource`, …) | done |
-| M4 | auth | — |
+| M4 | auth | done |
 | M5 | testkit + MySQL/SQLite/Mongo | — |
 | M6 | ops, docs, examples | — |
 
@@ -23,7 +23,7 @@ with a `replace` directive. sqlc must be on PATH.
 ```sh
 go install ./cmd/semii
 export SEMII_LOCAL_PATH=$PWD
-cd /tmp && semii new shop --auth none
+cd /tmp && semii new shop --auth jwt,session   # or --auth none
 cd shop && cp .env.example .env && docker compose up -d db
 semii migrate up
 semii g resource Customer name:string email:string:unique
@@ -37,8 +37,9 @@ semii dev
 `new`, `generate resource|migration|middleware`, `dev`, `routes`,
 `migrate up|down|status|redo|create`, `db seed`, `doctor`, `version`, with
 the global `--dry-run --force --verbose --no-color` and exit codes 0/1/2/3.
-`generate auth` and `--auth`/`--db` values other than `none`/`postgres`
-report the milestone that adds them (M4, M5).
+`generate auth [--strategy session,jwt,apikey]` adds account flows and can
+be re-run to add strategies. `--db` values other than `postgres` report
+milestone M5.
 
 ## Packages so far
 
@@ -68,6 +69,14 @@ report the milestone that adds them (M4, M5).
   jar; `Postgres(t)` clones a migrated template database per test.
   (Pulled forward from M5 because generated tests need it; MySQL, SQLite,
   Mongo and testcontainers remain M5.)
+- `auth` — `Principal`, `Middleware`, named policies (`Authenticated`,
+  `Role`, `Scope`, `Kind`, `Any`, `All`), JWT (HS256/EdDSA, pinned
+  algorithm, iss/aud, 30s leeway), server-side sessions with CSRF checks,
+  API keys (`sk_<env>_<prefix>_<secret>`, constant-time compare), one-time
+  tokens, an in-memory rate limiter, lockout backoff, and LogSender /
+  SMTPSender (STARTTLS required) / MemorySender.
+- `auth/password` — argon2id PHC hashes, rehash detection, a bounded
+  `Hasher`, the length + common-password policy (SecLists top 10k).
 - `web.Date` — date-only JSON (`"2006-01-02"`) for `date` fields.
 
 ## Design decisions (not spelled out in the spec)
@@ -126,6 +135,42 @@ report the milestone that adds them (M4, M5).
 - **`semii dev`** sets `HTTP_DRAIN_DELAY=-1s` (no drain wait between reloads)
   and runs the app in its own process group with a parent-death signal on
   Linux, so Ctrl+C stops it once and a killed watcher never orphans it.
+### M4
+
+- **`auth.Policy` is a small struct** (name + check), not a bare func type,
+  so `semii routes` can print `authenticated`, `role:admin`, … It
+  implements `web.Policy`; build custom ones with `auth.NewPolicy`.
+- **`ErrTokenExpired`, `ErrTokenReused`, `ErrCSRF` are `*web.Error`
+  values** (401 `token_expired`, 401 `token_reused`, 403 `csrf_rejected`),
+  so they render correctly without extra router setup.
+- **Stale session cookies count as absent**, not as a 401: otherwise a
+  browser with an expired cookie could not reach `/auth/login`. Protected
+  routes still answer 401, and CSRF is checked before any lookup.
+- **Login mode:** with both session and jwt enabled, `/auth/login` takes
+  `"mode": "session" | "token"` (default: first in `AUTH_STRATEGIES`).
+- **Register always answers 201 with a message** (never the user) and
+  forgot always 202; mail work runs in the background so neither the body
+  nor the timing reveals whether an email has an account.
+- **API keys** survive password resets (they belong to integrations) and
+  cannot create or list keys (`Kind(user)` on `/auth/api-keys`). Key env
+  tags are `live` (production), `test`, `dev`.
+- **`apikey` alone is rejected**: users need session or jwt to sign in and
+  manage keys.
+- **Logout with JWT** revokes the refresh family given in the body; access
+  tokens stay valid until they expire (stateless, 15 minutes).
+- **Generated layout:** each strategy is its own file in `internal/auth`
+  registered between `semii:strategies` markers, which is what makes
+  `generate auth --strategy` re-runnable. The project templates gained
+  markers for config, the test environment and seeds, and `app.go` builds
+  everything in one `newApp` (template v1 is not yet published, so it was
+  amended rather than versioned).
+- **auth imports config, db and logx** (for `config.Secret`, `db.ErrNotFound`
+  and the request logger) in addition to web; none of them adds a
+  third-party dependency beyond what web already has, plus golang-jwt and
+  x/crypto.
+- **Session rotation on privilege change** has no trigger yet: v1 exposes
+  no endpoint that changes roles.
+
 - **Dockerfile, CI workflow and deploy files** are M6; `semii new` writes
   `docker-compose.yml` (database only) now and accepts `--no-ci`.
 

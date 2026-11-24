@@ -16,6 +16,8 @@ type Config struct {
 	DatabaseURL semiiconfig.Secret `env:"DATABASE_URL" validate:"required"`
 	DB          DBConfig           `envPrefix:"DB_"`
 	HTTP        HTTPConfig         `envPrefix:"HTTP_"`
+	// semii:config:start
+	// semii:config:end
 }
 
 // DBConfig tunes the database pool and migrations.

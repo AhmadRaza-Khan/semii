@@ -1,0 +1,61 @@
+package factory
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"{{.Module}}/db/sqlc"
+	"{{.Module}}/internal/auth"
+	"{{.Semii}}/auth/password"
+)
+
+// UserInput adjusts the account User creates.
+type UserInput struct {
+	Email    string
+	Password string
+	Roles    []string
+	Verified bool
+}
+
+// User creates an account (verified by default) and returns it with its
+// password.
+func User(t testing.TB, q *sqlc.Queries, opts ...func(*UserInput)) (auth.User, string) {
+	t.Helper()
+	n := Next()
+	in := UserInput{Email: fmt.Sprintf("user%d@example.com", n), Password: fmt.Sprintf("factory-password-%d", n), Verified: true}
+	for _, opt := range opts {
+		opt(&in)
+	}
+	hash, err := password.Hash(in.Password, password.DefaultParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	t0 := time.Now().UTC().Truncate(time.Microsecond)
+	row, err := q.CreateUser(ctx, sqlc.CreateUserParams{
+{{- if .UUID}}
+		ID: uuid.Must(uuid.NewV7()),
+{{- end}}
+		Email: in.Email, PasswordHash: hash, Roles: []string{}, CreatedAt: t0, UpdatedAt: t0,
+	})
+	if err != nil {
+		t.Fatalf("factory.User: %v", err)
+	}
+	for _, role := range in.Roles {
+		if err := q.GrantRole(ctx, sqlc.GrantRoleParams{ID: row.ID, Role: role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if in.Verified {
+		if err := q.MarkEmailVerified(ctx, sqlc.MarkEmailVerifiedParams{ID: row.ID, Now: t0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if row, err = q.GetUser(ctx, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	return auth.UserFromRow(row), in.Password
+}

@@ -10,6 +10,7 @@ import (
 	"{{.Module}}/internal/app/apptest"
 	"{{.Module}}/internal/factory"
 	"{{.Module}}/internal/{{.Pkg}}"
+	semiiauth "{{.Semii}}/auth"
 	"{{.Semii}}/testkit"
 	"{{.Semii}}/web"
 )
@@ -19,6 +20,13 @@ func TestMain(m *testing.M) { testkit.Main(m) }
 func Test{{.Name}}API(t *testing.T) {
 	a, c := apptest.New(t)
 	q := sqlc.New(a.DB)
+{{- if not .Public}}
+
+	t.Run("requires authentication", func(t *testing.T) {
+		c.GET("{{.Route}}").Do().ExpectProblem(http.StatusUnauthorized, "unauthenticated")
+	})
+	c = c.As(&semiiauth.Principal{ID: "test-user", Kind: semiiauth.KindUser})
+{{- end}}
 	path := func(id any) string { return fmt.Sprintf("{{.Route}}/%v", id) }
 
 	t.Run("create", func(t *testing.T) {

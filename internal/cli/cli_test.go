@@ -40,7 +40,8 @@ func TestUserErrors(t *testing.T) {
 	cases := [][]string{
 		{"new"},
 		{"new", "a/b"},
-		{"new", "shop", "--auth", "jwt"},
+		{"new", "shop", "--auth", "ldap"},
+		{"new", "shop2", "--auth", "apikey"},
 		{"new", "shop", "--db", "mongo", "--auth", "none"},
 		{"new", "shop", "--bogus"},
 		{"generate"},
@@ -117,19 +118,35 @@ func TestEndToEnd(t *testing.T) {
 		}
 		return out
 	}
-	for _, id := range []string{"uuid", "bigint"} {
-		t.Run(id, func(t *testing.T) {
-			must(t, dir, "new", "app"+id, "--auth", "none", "--id", id, "--no-git")
-			root := filepath.Join(dir, "app"+id)
+	cases := []struct {
+		name, id, auth, addLater string
+	}{
+		{"uuid-noauth", "uuid", "none", ""},
+		{"bigint-allauth", "bigint", "jwt,session,apikey", ""},
+		{"uuid-jwt-then-more", "uuid", "jwt", "session,apikey"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name := strings.ReplaceAll(tc.name, "-", "")
+			must(t, dir, "new", name, "--auth", tc.auth, "--id", tc.id, "--no-git")
+			root := filepath.Join(dir, name)
+			if tc.addLater != "" {
+				must(t, root, "g", "auth", "--strategy", tc.addLater)
+			}
 			must(t, root, "g", "resource", "Customer", "name:string:min=2", "email:string:unique", "tier:string:default=basic:index")
 			must(t, root, "g", "resource", "Order",
 				"customer:ref:Customer", "backup:ref:Customer:null", "total:decimal:min=0", "discount:decimal:null",
 				"qty:int:min=1:max=100", "big:int64:null:unique", "paid:bool:default=false", "score:float:null:index",
 				"due:date", "due_on:date:null:index", "placed_at:time", "at2:time:null", "meta:json", "meta2:json:null",
 				"ref:uuid:null:index", "status:string:max=20:default=open", "notes:text:null", "--soft-delete")
+			must(t, root, "g", "resource", "Tag", "label:string", "--no-auth")
 			must(t, root, "g", "middleware", "audit")
-			if out := must(t, root, "routes"); !strings.Contains(out, "order.(*Handler).List") {
+			out := must(t, root, "routes")
+			if !strings.Contains(out, "order.(*Handler).List") || !strings.Contains(out, "tag.(*Handler).List") {
 				t.Errorf("routes:\n%s", out)
+			}
+			if tc.auth != "none" && !strings.Contains(out, "/auth/login") {
+				t.Errorf("auth routes missing:\n%s", out)
 			}
 			checks := [][]string{{"go", "vet", "./..."}, {"go", "test", "-race", "-count=1", "./..."}}
 			if _, err := exec.LookPath("staticcheck"); err == nil {

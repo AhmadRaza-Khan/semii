@@ -1,6 +1,7 @@
 package {{.Pkg}}
 
 import (
+	semiiauth "{{.Semii}}/auth"
 	"{{.Semii}}/web"
 )
 
@@ -11,7 +12,7 @@ func Register(r *web.Router, h *Handler) {
 	// Require(...) once authentication is set up.
 	g := r.Group("{{.Route}}").Public()
 {{- else}}
-	g := r.Group("{{.Route}}").Require(auth.Authenticated())
+	g := r.Group("{{.Route}}").Require(semiiauth.Authenticated())
 {{- end}}
 	g.HandleFunc("GET /", h.List)
 	g.HandleFunc("POST /", h.Create)

@@ -24,7 +24,6 @@ type ProjectData struct {
 // NewOptions are the inputs of PlanNew.
 type NewOptions struct {
 	Name, Module, DB, ID string
-	Auth                 []string
 	Docker               bool
 	Version              string
 	LocalSemii           string
@@ -54,12 +53,10 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 	if o.DB != "postgres" {
 		return nil, Project{}, fmt.Errorf("--db %s: templates for %s arrive in milestone M5; use --db postgres", o.DB, o.DB)
 	}
-	if len(o.Auth) > 0 {
-		return nil, Project{}, fmt.Errorf("--auth %s: auth generators arrive in milestone M4; use --auth none", strings.Join(o.Auth, ","))
-	}
+	// Auth strategies are added afterwards by PlanAuth, which records them.
 	proj := Project{
 		Root: root, Semii: o.Version, Template: TemplateVersion,
-		Module: o.Module, DB: o.DB, Auth: o.Auth, ID: o.ID,
+		Module: o.Module, DB: o.DB, ID: o.ID,
 	}
 	if err := proj.Validate(); err != nil {
 		return nil, Project{}, err

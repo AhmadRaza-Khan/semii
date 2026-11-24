@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AhmadRaza-Khan/semii/internal/gen"
@@ -21,7 +22,7 @@ func runGenerate(e *Env, args []string) error {
 	case "middleware":
 		return generateMiddleware(e, args[1:])
 	case "auth":
-		return userErr("generate auth arrives in milestone M4")
+		return generateAuth(e, args[1:])
 	}
 	return userErr("unknown generator %q (resource, migration, middleware, auth)", args[0])
 }
@@ -71,6 +72,48 @@ func (e *Env) refresh(root string) error {
 	}
 	e.printf("  run       go build ./...\n")
 	return e.runTool(root, "go", "build", "./...")
+}
+
+func generateAuth(e *Env, args []string) error {
+	fs := flag.NewFlagSet("generate auth", flag.ContinueOnError)
+	strategy := fs.String("strategy", "", "comma list of session,jwt,apikey to add")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
+		return userErr("usage: semii generate auth [--strategy session,jwt,apikey]")
+	}
+	p, err := e.project()
+	if err != nil {
+		return err
+	}
+	strategies := splitList(*strategy)
+	if len(strategies) == 0 {
+		if len(p.Auth) > 0 {
+			return userErr("auth is already generated (%s); pass --strategy to add one", strings.Join(p.Auth, ","))
+		}
+		strategies = []string{"jwt"}
+	}
+	if err := e.applyAuth(p, strategies); err != nil {
+		return err
+	}
+	if e.DryRun {
+		return nil
+	}
+	return e.refresh(p.Root)
+}
+
+// applyAuth plans and writes the auth flows for strategies.
+func (e *Env) applyAuth(p gen.Project, strategies []string) error {
+	plan, _, err := gen.PlanAuth(e.renderer(), gen.AuthOptions{
+		Project: p, Strategies: strategies, Version: Version, Now: time.Now(),
+	})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	e.printf("Generating auth (%s)\n", strings.Join(strategies, ", "))
+	return plan.Apply(e.Stdout, e.Force, e.DryRun)
 }
 
 func generateMigration(e *Env, args []string) error {

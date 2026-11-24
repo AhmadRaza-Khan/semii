@@ -280,9 +280,6 @@ func PlanResource(rd Renderer, o ResourceOptions) (*Plan, Resource, error) {
 		}
 		res.Fields = append(res.Fields, f)
 	}
-	if p.HasAuth() && !o.NoAuth {
-		return nil, Resource{}, fmt.Errorf("authenticated resources need the auth package (milestone M4); pass --no-auth for now")
-	}
 	res.Timestamp = MigrationVersion(p.Root, o.Now)
 	// Re-running the generator targets the existing migration instead of
 	// adding a second CREATE TABLE.
@@ -332,53 +329,15 @@ func PlanResource(rd Renderer, o ResourceOptions) (*Plan, Resource, error) {
 // planWiring registers the resource in internal/app (G3).
 func planWiring(plan *Plan, p Project, r Resource) error {
 	pkgImport := p.Module + "/internal/" + r.Pkg
-	sqlcImport := p.Module + "/db/sqlc"
-	edits := []struct {
-		file    string
-		markers []struct{ name, line string }
-		imports []string
-	}{
-		{"internal/app/routes.go", []struct{ name, line string }{
-			{"deps", fmt.Sprintf("%s *%s.Handler", r.Plural, r.Pkg)},
-			{"routes", fmt.Sprintf("%s.Register(r, d.%s)", r.Pkg, r.Plural)},
-		}, []string{pkgImport}},
-		{"internal/app/app.go", []struct{ name, line string }{
-			{"wiring", fmt.Sprintf("d.%s = %s.NewHandler(%s.NewService(%s.NewSQLRepo(sqlc.New(pool))))", r.Plural, r.Pkg, r.Pkg, r.Pkg)},
-		}, []string{pkgImport, sqlcImport}},
+	if err := planEdit(plan, p.Root, fileEdit{"internal/app/routes.go", []markerLine{
+		{"deps", fmt.Sprintf("%s *%s.Handler", r.Plural, r.Pkg)},
+		{"routes", fmt.Sprintf("%s.Register(r, d.%s)", r.Pkg, r.Plural)},
+	}, []string{pkgImport}}); err != nil {
+		return err
 	}
-	for _, e := range edits {
-		full := filepath.Join(p.Root, e.file)
-		src, err := os.ReadFile(full)
-		var manual []string
-		for _, m := range e.markers {
-			manual = append(manual, fmt.Sprintf("// between semii:%s markers:\n%s", m.name, m.line))
-		}
-		manual = append(manual, "// imports:\n\""+strings.Join(e.imports, "\"\n\"")+"\"")
-		note := strings.Join(manual, "\n")
-		if err != nil {
-			plan.Edit(e.file, nil, note)
-			continue
-		}
-		ok := true
-		for _, m := range e.markers {
-			next, err := InsertBetweenMarkers(src, m.name, m.line)
-			if err != nil {
-				ok = false
-				break
-			}
-			src = next
-		}
-		if !ok {
-			plan.Edit(e.file, nil, note)
-			continue
-		}
-		out, err := AddImports(full, src, e.imports...)
-		if err != nil {
-			return err
-		}
-		plan.Edit(e.file, out, "")
-	}
-	return nil
+	return planEdit(plan, p.Root, fileEdit{"internal/app/app.go", []markerLine{
+		{"wiring", fmt.Sprintf("d.%s = %s.NewHandler(%s.NewService(%s.NewSQLRepo(sqlc.New(pool))))", r.Plural, r.Pkg, r.Pkg, r.Pkg)},
+	}, []string{pkgImport, p.Module + "/db/sqlc"}})
 }
 
 // MigrationVersion returns a YYYYMMDDHHMMSS version not used by an

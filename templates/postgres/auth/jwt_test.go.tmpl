@@ -1,0 +1,74 @@
+package auth
+
+import (
+	"net/http"
+	"testing"
+)
+
+func loginTokens(t *testing.T, e *testEnv, email string) tokenPair {
+	t.Helper()
+	var pair tokenPair
+	e.login(email, strongPassword, "token").ExpectStatus(http.StatusOK).Decode(&pair)
+	if pair.AccessToken == "" || pair.RefreshToken == "" || pair.TokenType != "Bearer" || pair.ExpiresIn <= 0 {
+		t.Fatalf("%+v", pair)
+	}
+	return pair
+}
+
+func TestJWTLoginAndRefresh(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("j@x.io")
+	pair := loginTokens(t, e, "j@x.io")
+	e.c.GET("/auth/me").Bearer(pair.AccessToken).Do().ExpectStatus(http.StatusOK).ExpectJSON(map[string]any{"email": "j@x.io"})
+	e.c.GET("/auth/me").Bearer(pair.AccessToken + "x").Do().ExpectProblem(http.StatusUnauthorized, "invalid_credentials")
+
+	var next tokenPair
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().ExpectStatus(http.StatusOK).Decode(&next)
+	if next.RefreshToken == pair.RefreshToken {
+		t.Fatal("refresh token not rotated")
+	}
+	e.c.GET("/auth/me").Bearer(next.AccessToken).Do().ExpectStatus(http.StatusOK)
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": "made-up"}).Do().
+		ExpectProblem(http.StatusUnauthorized, "invalid_credentials")
+}
+
+// Checklist: refresh reuse revokes the family.
+func TestJWTRefreshReuseRevokesFamily(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("reuse@x.io")
+	pair := loginTokens(t, e, "reuse@x.io")
+	var next tokenPair
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().ExpectStatus(http.StatusOK).Decode(&next)
+
+	// An attacker replays the first token: the whole family dies.
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().
+		ExpectProblem(http.StatusUnauthorized, "token_reused")
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": next.RefreshToken}).Do().
+		ExpectProblem(http.StatusUnauthorized, "invalid_credentials")
+	// Other sign-ins are unaffected.
+	other := loginTokens(t, e, "reuse@x.io")
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": other.RefreshToken}).Do().ExpectStatus(http.StatusOK)
+}
+
+func TestJWTLogoutRevokesFamily(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("out@x.io")
+	pair := loginTokens(t, e, "out@x.io")
+	e.c.POST("/auth/logout").Bearer(pair.AccessToken).JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().
+		ExpectStatus(http.StatusNoContent)
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().
+		ExpectProblem(http.StatusUnauthorized, "invalid_credentials")
+}
+
+// Checklist: password reset revokes all refresh families.
+func TestResetRevokesRefreshTokens(t *testing.T) {
+	e := newTestEnv(t)
+	e.register("rr@x.io")
+	pair := loginTokens(t, e, "rr@x.io")
+	e.c.POST("/auth/password/forgot").JSON(map[string]string{"email": "rr@x.io"}).Do().ExpectStatus(http.StatusAccepted)
+	tok := e.mailedToken("reset", "rr@x.io")
+	e.c.POST("/auth/password/reset").JSON(map[string]string{"token": tok, "password": "a-brand-new-passphrase"}).Do().
+		ExpectStatus(http.StatusNoContent)
+	e.c.POST("/auth/refresh").JSON(map[string]string{"refresh_token": pair.RefreshToken}).Do().
+		ExpectProblem(http.StatusUnauthorized, "invalid_credentials")
+}

@@ -1,0 +1,22 @@
+package auth
+
+import (
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/web"
+)
+
+// Register mounts the /auth endpoints.
+func Register(r *web.Router, h *Handler) {
+	g := r.Group("/auth")
+	g.HandleFunc("POST /register", h.Register).Public()
+	g.HandleFunc("POST /login", h.Login).Public()
+	g.HandleFunc("POST /logout", h.Logout).Require(semiiauth.Authenticated())
+	g.HandleFunc("GET /me", h.Me).Require(semiiauth.Kind(semiiauth.KindUser))
+	g.HandleFunc("POST /password/forgot", h.Forgot).Public()
+	g.HandleFunc("POST /password/reset", h.Reset).Public()
+	g.HandleFunc("POST /email/verify", h.VerifyEmail).Public()
+	g.HandleFunc("POST /email/resend", h.Resend).Require(semiiauth.Kind(semiiauth.KindUser))
+	for _, st := range h.strategies {
+		st.routes(g)
+	}
+}

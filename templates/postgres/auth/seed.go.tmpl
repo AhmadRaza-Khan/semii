@@ -1,0 +1,41 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"{{.Module}}/db/sqlc"
+	"{{.Semii}}/auth/password"
+)
+
+// SeedAdmin creates the account email (if missing) and grants it the
+// "admin" role. It is idempotent: an existing account keeps its password.
+func SeedAdmin(ctx context.Context, pool *pgxpool.Pool, email, pw string) error {
+	if err := password.Check(pw, true); err != nil {
+		return fmt.Errorf("seed admin: %w", err)
+	}
+	hash, err := password.Hash(pw, password.DefaultParams)
+	if err != nil {
+		return err
+	}
+	q := sqlc.New(pool)
+	t := now()
+	email = normalizeEmail(email)
+	_, err = q.CreateUser(ctx, sqlc.CreateUserParams{
+{{- if .UUID}}
+		ID: newID(),
+{{- end}}
+		Email: email, PasswordHash: hash, Roles: []string{}, CreatedAt: t, UpdatedAt: t,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("seed admin: %w", err)
+	}
+	row, err := q.GetUserByEmail(ctx, email)
+	if err != nil {
+		return fmt.Errorf("seed admin: %w", err)
+	}
+	return q.GrantRole(ctx, sqlc.GrantRoleParams{ID: row.ID, Role: "admin"})
+}
