@@ -1,0 +1,29 @@
+// PM2 process file: pm2 start deploy/pm2/ecosystem.config.js && pm2 save
+// Reads the same KEY=value file systemd uses.
+const fs = require("fs");
+
+function envFile(path) {
+  const env = {};
+  for (const line of fs.readFileSync(path, "utf8").split("\n")) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (m) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, "$2");
+  }
+  return env;
+}
+
+module.exports = {
+  apps: [
+    {
+      name: "shop-postgres",
+      script: "/opt/shop-postgres/api",
+      interpreter: "none",
+      exec_mode: "fork",
+      instances: 1,
+      cwd: "/var/lib/shop-postgres",
+      autorestart: true,
+      // Longer than the drain delay plus the shutdown timeout.
+      kill_timeout: 40000,
+      env: envFile("/etc/shop-postgres/env"),
+    },
+  ],
+};

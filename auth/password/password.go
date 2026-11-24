@@ -127,6 +127,7 @@ var common = sync.OnceValue(func() map[string]struct{} {
 // PolicyError explains why a password was rejected.
 type PolicyError struct{ Reason string }
 
+// Error implements error.
 func (e *PolicyError) Error() string { return "password " + e.Reason }
 
 // Check enforces the policy: 8 to 128 characters, no composition rules,

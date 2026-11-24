@@ -5,12 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	semiiauth "{{.Semii}}/auth"
 	"{{.Semii}}/db"
 	"{{.Semii}}/web"
 )
+
+// refreshRow is a refresh token as stored (hash only).
+type refreshRow struct {
+	Hash                 string
+	FamilyID             uuid.UUID
+	UserID               {{.IDGo}}
+	ExpiresAt, CreatedAt time.Time
+	UsedAt, RevokedAt    *time.Time
+}
 
 // jwtStrategy signs users in with a short-lived access token (JWT) and a
 // rotating, single-use refresh token.

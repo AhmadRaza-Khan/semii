@@ -4,10 +4,19 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	semiiauth "{{.Semii}}/auth"
 	"{{.Semii}}/web"
 )
+
+// sessionRow is a session as stored.
+type sessionRow struct {
+	IDHash                           string
+	UserID                           {{.IDGo}}
+	CreatedAt, LastSeenAt, ExpiresAt time.Time
+	UserAgent, IP                    string
+}
 
 // sessionStrategy signs users in with a server-side session cookie.
 type sessionStrategy struct {

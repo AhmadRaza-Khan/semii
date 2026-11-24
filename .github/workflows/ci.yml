@@ -1,0 +1,77 @@
+# CI for the semii framework itself.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - run: go vet ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Database tests start Postgres, MySQL and Mongo with testcontainers.
+      - run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - run: go tool cover -func=coverage.out | tail -1
+
+  e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [pg, mysql, sqlite, mongo]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0
+      - run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+      - name: new, generate, vet, staticcheck and tests for ${{ matrix.db }}
+        env:
+          SEMII_E2E: "1"
+          SEMII_E2E_ONLY: ${{ matrix.db }}-
+        run: go test -count=1 -timeout 40m -run EndToEnd -v ./internal/cli
+
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [shop-postgres, notes-mongo]
+    defaults:
+      run:
+        working-directory: examples/${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/${{ matrix.example }}/go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

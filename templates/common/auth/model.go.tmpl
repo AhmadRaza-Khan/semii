@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,28 +36,6 @@ type (
 		Kind      string // "reset" | "verify"
 		ExpiresAt time.Time
 		CreatedAt time.Time
-	}
-	sessionRow struct {
-		IDHash                          string
-		UserID                          {{.IDGo}}
-		CreatedAt, LastSeenAt, ExpiresAt time.Time
-		UserAgent, IP                   string
-	}
-	refreshRow struct {
-		Hash                 string
-		FamilyID             uuid.UUID
-		UserID               {{.IDGo}}
-		ExpiresAt, CreatedAt time.Time
-		UsedAt, RevokedAt    *time.Time
-	}
-	apiKeyRow struct {
-		UserID     {{.IDGo}}
-		Name       string
-		Prefix     string
-		SecretHash string
-		Scopes     []string
-		ExpiresAt  *time.Time
-		CreatedAt  time.Time
 	}
 )
 
@@ -103,7 +80,6 @@ func now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
 // Errors shown to clients.
 var (
-	errNoLogin      = errors.New("strategy does not sign users in")
 	errInvalidToken = web.NewError(http.StatusBadRequest, "invalid_token", "the link is invalid, expired or already used")
 	errUnverified   = web.NewError(http.StatusForbidden, "email_unverified", "verify your email address before signing in")
 	errStrategyOff  = web.NewError(http.StatusNotFound, "not_found", "this sign-in method is not enabled")

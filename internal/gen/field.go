@@ -387,12 +387,12 @@ func (f Field) defaultGo() (string, error) {
 		if _, err := strconv.ParseInt(v, 10, 64); err != nil {
 			return "", fmt.Errorf("default %q is not an integer", v)
 		}
-		return v, nil
+		return f.info.goType + "(" + v + ")", nil // typed: an untyped literal is int
 	case "float":
 		if _, err := strconv.ParseFloat(v, 64); err != nil {
 			return "", fmt.Errorf("default %q is not a number", v)
 		}
-		return v, nil
+		return "float64(" + v + ")", nil
 	case "decimal":
 		if _, ok := new(big.Rat).SetString(v); !ok {
 			return "", fmt.Errorf("default %q is not a decimal", v)

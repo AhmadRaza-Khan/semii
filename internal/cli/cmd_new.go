@@ -24,7 +24,8 @@ func runNew(e *Env, args []string) error {
 	authList := fs.String("auth", "jwt", "comma list of session,jwt,apikey, or none")
 	id := fs.String("id", "uuid", "uuid | bigint")
 	noDocker := fs.Bool("no-docker", false, "skip docker-compose.yml")
-	_ = fs.Bool("no-ci", false, "skip .github/workflows (CI templates arrive in M6)")
+	noCI := fs.Bool("no-ci", false, "skip .github/workflows/ci.yml")
+	deploy := fs.String("deploy", "", "ssh: add a GitHub Actions deploy workflow (build, upload, migrate, restart)")
 	noGit := fs.Bool("no-git", false, "skip git init")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -66,7 +67,7 @@ func runNew(e *Env, args []string) error {
 	}
 	plan, proj, err := gen.PlanNew(e.renderer(), root, gen.NewOptions{
 		Name: name, Module: *module, DB: *db, ID: *id,
-		Docker: !*noDocker, Version: Version, LocalSemii: local, Now: time.Now(),
+		Docker: !*noDocker, CI: !*noCI, Deploy: *deploy, Version: Version, LocalSemii: local, Now: time.Now(),
 	})
 	if err != nil {
 		return userErr("%v", err)
@@ -87,14 +88,15 @@ func runNew(e *Env, args []string) error {
 		}
 	}
 
+	// sqlc first: generated code (auth) imports db/sqlc, which tidy must see.
+	if err := e.sqlcGenerate(root); err != nil {
+		return err
+	}
 	e.printf("  run       go mod tidy\n")
 	if err := e.runTool(root, "go", "mod", "tidy"); err != nil {
 		if local == "" {
 			return toolErr(fmt.Errorf("%w\nhint: semii is not published yet; set %s to a local checkout of the framework", err, EnvLocalSemii))
 		}
-		return err
-	}
-	if err := e.sqlcGenerate(root); err != nil {
 		return err
 	}
 	if !*noGit {

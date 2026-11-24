@@ -1,0 +1,22 @@
+# goreleaser v2: CLI binaries for the platforms in the v1 release bar.
+version: 2
+project_name: semii
+builds:
+  - id: semii
+    main: ./cmd/semii
+    binary: semii
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/AhmadRaza-Khan/semii/internal/cli.Version={{.Tag}}
+    targets: [linux_amd64, linux_arm64, darwin_arm64, windows_amd64]
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [README.md, LICENSE*, CHANGELOG.md]
+checksum:
+  name_template: checksums.txt
+changelog:
+  use: github

@@ -57,6 +57,8 @@ func newService(cfg config.Config, st *store, log *slog.Logger) (*Service, error
 }
 
 // enabled reports whether the named strategy is active.
+//
+//lint:ignore U1000 used by the jwt and apikey strategies when generated
 func (s *Service) enabled(name string) bool {
 	return slices.ContainsFunc(s.active, func(st strategy) bool { return st.name() == name })
 }

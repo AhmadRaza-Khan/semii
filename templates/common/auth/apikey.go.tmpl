@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -10,6 +11,19 @@ import (
 	"{{.Semii}}/db"
 	"{{.Semii}}/web"
 )
+
+// apiKeyRow is a new API key to store.
+type apiKeyRow struct {
+	UserID     {{.IDGo}}
+	Name       string
+	Prefix     string
+	SecretHash string
+	Scopes     []string
+	ExpiresAt  *time.Time
+	CreatedAt  time.Time
+}
+
+var errNoLogin = errors.New("strategy does not sign users in")
 
 // apiKeyStrategy authenticates "X-API-Key: sk_..." (or a bearer sk_ key)
 // and lets signed-in users manage their keys.

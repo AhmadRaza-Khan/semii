@@ -1,0 +1,36 @@
+# /etc/systemd/system/notes-mongo.service
+# Install: sudo useradd --system --home /var/lib/notes-mongo notes-mongo
+#          sudo install -d -o notes-mongo /var/lib/notes-mongo /opt/notes-mongo /etc/notes-mongo
+#          put the variables from .env.example in /etc/notes-mongo/env (chmod 600)
+#          sudo systemctl enable --now notes-mongo
+[Unit]
+Description=notes-mongo API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notes-mongo
+Group=notes-mongo
+EnvironmentFile=/etc/notes-mongo/env
+WorkingDirectory=/var/lib/notes-mongo
+ExecStart=/opt/notes-mongo/api
+Restart=on-failure
+RestartSec=2
+# Longer than the drain delay (5s) plus the shutdown timeout (30s).
+TimeoutStopSec=40
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/notes-mongo
+
+[Install]
+WantedBy=multi-user.target

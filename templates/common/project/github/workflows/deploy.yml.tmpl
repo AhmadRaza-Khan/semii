@@ -1,0 +1,46 @@
+# Deploy over SSH on pushes to main: build, upload, migrate, restart.
+# Server setup: see deploy/ and the semii deployment guide. Secrets:
+#   DEPLOY_HOST  server address      DEPLOY_USER  ssh user (sudo for systemctl)
+#   DEPLOY_KEY   private ssh key     DEPLOY_KNOWN_HOSTS  output of ssh-keyscan
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X {{.Semii}}/server.Version=${{"{{"}} github.sha {{"}}"}}" -o api ./cmd/api
+      - name: SSH setup
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{"{{"}} secrets.DEPLOY_KEY {{"}}"}}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          echo "${{"{{"}} secrets.DEPLOY_KNOWN_HOSTS {{"}}"}}" > ~/.ssh/known_hosts
+      - name: Upload, migrate, restart
+        env:
+          TARGET: ${{"{{"}} secrets.DEPLOY_USER {{"}}"}}@${{"{{"}} secrets.DEPLOY_HOST {{"}}"}}
+        run: |
+          scp api "$TARGET:/tmp/{{.Name}}-api"
+          ssh "$TARGET" 'set -e
+            sudo install -m 0755 /tmp/{{.Name}}-api /opt/{{.Name}}/api.new
+            sudo systemd-run --wait --pipe --quiet --uid={{.Name}} --gid={{.Name}} \
+              -p EnvironmentFile=/etc/{{.Name}}/env -p WorkingDirectory=/var/lib/{{.Name}} \
+              /opt/{{.Name}}/api.new migrate
+            sudo mv /opt/{{.Name}}/api.new /opt/{{.Name}}/api
+            sudo systemctl restart {{.Name}}   # PM2: pm2 reload {{.Name}}
+            rm -f /tmp/{{.Name}}-api'

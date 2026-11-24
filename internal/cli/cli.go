@@ -14,7 +14,9 @@ import (
 )
 
 // Version is the CLI version, stamped into generated files and .semii.yaml.
-const Version = "v0.3.0-dev"
+// Release builds set it with -ldflags "-X …/internal/cli.Version=v1.2.3";
+// a release version is also what generated go.mod files require.
+var Version = "v0.6.0-dev"
 
 // Exit codes.
 const (
@@ -77,7 +79,7 @@ type command struct {
 
 func commands() []command {
 	return []command{
-		{"new", nil, "new <name> [--module path] [--db postgres] [--auth none] [--id uuid|bigint] [--no-docker] [--no-ci] [--no-git]", runNew},
+		{"new", nil, "new <name> [--module path] [--db postgres|mysql|sqlite|mongo] [--auth jwt|session|apikey|none] [--id uuid|bigint] [--deploy ssh] [--no-docker] [--no-ci] [--no-git]", runNew},
 		{"generate", []string{"g"}, "generate resource|migration|middleware|auth ...", runGenerate},
 		{"dev", nil, "dev                 build, run and reload on changes", runDev},
 		{"routes", nil, "routes [--json]     list routes and their policies", runRoutes},

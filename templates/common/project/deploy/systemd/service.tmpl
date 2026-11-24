@@ -1,0 +1,36 @@
+# /etc/systemd/system/{{.Name}}.service
+# Install: sudo useradd --system --home /var/lib/{{.Name}} {{.Name}}
+#          sudo install -d -o {{.Name}} /var/lib/{{.Name}} /opt/{{.Name}} /etc/{{.Name}}
+#          put the variables from .env.example in /etc/{{.Name}}/env (chmod 600)
+#          sudo systemctl enable --now {{.Name}}
+[Unit]
+Description={{.Name}} API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{.Name}}
+Group={{.Name}}
+EnvironmentFile=/etc/{{.Name}}/env
+WorkingDirectory=/var/lib/{{.Name}}
+ExecStart=/opt/{{.Name}}/api
+Restart=on-failure
+RestartSec=2
+# Longer than the drain delay (5s) plus the shutdown timeout (30s).
+TimeoutStopSec=40
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/{{.Name}}
+
+[Install]
+WantedBy=multi-user.target

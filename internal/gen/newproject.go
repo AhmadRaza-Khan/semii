@@ -32,6 +32,8 @@ func (d ProjectData) Mongo() bool    { return d.DB == "mongo" }
 type NewOptions struct {
 	Name, Module, DB, ID string
 	Docker               bool
+	CI                   bool
+	Deploy               string // "" or "ssh": add .github/workflows/deploy.yml
 	Version              string
 	LocalSemii           string
 	Now                  time.Time
@@ -88,9 +90,24 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 		files["db/embed.go.tmpl"] = "db/embed.go"
 		files["db/migrations/init.sql.tmpl"] = "db/migrations/" + o.Now.UTC().Format("20060102150405") + "_init.sql"
 	}
-	if o.Docker && o.DB != "sqlite" {
+	if o.Docker {
 		files["docker-compose.yml.tmpl"] = "docker-compose.yml"
+		files["Dockerfile.tmpl"] = "Dockerfile"
+		files["dockerignore.tmpl"] = ".dockerignore"
 	}
+	if o.CI {
+		files["github/workflows/ci.yml.tmpl"] = ".github/workflows/ci.yml"
+	}
+	switch o.Deploy {
+	case "":
+	case "ssh":
+		files["github/workflows/deploy.yml.tmpl"] = ".github/workflows/deploy.yml"
+	default:
+		return nil, Project{}, fmt.Errorf("--deploy %q: only ssh is supported", o.Deploy)
+	}
+	files["deploy/systemd/service.tmpl"] = "deploy/systemd/" + o.Name + ".service"
+	files["deploy/pm2/ecosystem.config.js.tmpl"] = "deploy/pm2/ecosystem.config.js"
+	files["deploy/nginx/site.conf.tmpl"] = "deploy/nginx/" + o.Name + ".conf"
 	for _, tmpl := range sortedKeys(files) {
 		target := files[tmpl]
 		out, err := rd.Render(path.Join("common/project", tmpl), path.Join(root, target), data)

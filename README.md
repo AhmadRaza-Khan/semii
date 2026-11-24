@@ -1,8 +1,11 @@
 # semii
 
 Rails-speed scaffolding for Go backend APIs. Conventions are delivered
-through code generation, never runtime magic. The spec lives in
-`semii-v1-spec/`.
+through code generation, never runtime magic.
+
+**Documentation:** [docs/](docs/README.md) (getting started, CLI
+reference, one page per package, deployment). **Examples:**
+[examples/](examples/README.md). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
 ## Status
 
@@ -13,7 +16,7 @@ through code generation, never runtime magic. The spec lives in
 | M3 | generator engine + Postgres (`semii new`, `generate resource`, …) | done |
 | M4 | auth | done |
 | M5 | testkit + MySQL/SQLite/Mongo | done |
-| M6 | ops, docs, examples | — |
+| M6 | ops, docs, examples | done |
 
 ## Quick start (from a local checkout)
 
@@ -207,8 +210,20 @@ indexes declared in `db/mongo`).
   testcontainers' Docker dependency would otherwise pull versions needing
   Go 1.26 during `go mod tidy`. Remove the pins once on Go 1.26+.
 
-- **Dockerfile, CI workflow and deploy files** are M6; `semii new` writes
-  `docker-compose.yml` (database only) now and accepts `--no-ci`.
+### M6
+
+- **Generated projects** get a distroless Dockerfile, a compose file
+  running app + database, `.github/workflows/ci.yml` (lint, vet,
+  staticcheck, tests with `-race`, build, image on main; govulncheck as its
+  own job), optional `--deploy ssh` workflow, and systemd, PM2 and Nginx
+  files. The binary has an `api migrate` command for deploys.
+- **Until semii is published**, the `replace` directive in projects made
+  with `SEMII_LOCAL_PATH` points outside the Docker build context: run
+  `go mod vendor` before `docker build`, and CI will not resolve it.
+- **Releases:** `.goreleaser.yaml` and `.github/workflows/release.yml`
+  build the CLI for linux/amd64, linux/arm64, darwin/arm64 and
+  windows/amd64 on a `v*` tag, stamping `internal/cli.Version`.
+
 
 ## Development
 

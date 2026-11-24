@@ -126,6 +126,7 @@ func TestEndToEnd(t *testing.T) {
 		{"pg-uuid-noauth", "postgres", "uuid", "none", ""},
 		{"pg-bigint-allauth", "postgres", "bigint", "jwt,session,apikey", ""},
 		{"pg-uuid-jwt-then-more", "postgres", "uuid", "jwt", "session,apikey"},
+		{"pg-uuid-session-only", "postgres", "uuid", "session", ""},
 		{"mysql-uuid-allauth", "mysql", "uuid", "jwt,session,apikey", ""},
 		{"mysql-bigint-noauth", "mysql", "bigint", "none", ""},
 		{"sqlite-uuid-allauth", "sqlite", "uuid", "jwt,session,apikey", ""},

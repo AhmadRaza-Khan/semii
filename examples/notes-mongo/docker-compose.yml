@@ -1,0 +1,32 @@
+# Local services. Database only (for `semii dev`): docker compose up -d db
+# Whole stack in containers:                       docker compose up --build
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: mongodb://db:27017/?directConnection=true
+      HTTP_ADDR: ":8080"
+      DB_AUTO_MIGRATE: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    # A single-node replica set: MongoDB transactions require one.
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]}).ok }"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - dbdata:/data/db
+
+volumes:
+  dbdata:

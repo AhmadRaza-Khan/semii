@@ -1,0 +1,36 @@
+# /etc/systemd/system/shop-postgres.service
+# Install: sudo useradd --system --home /var/lib/shop-postgres shop-postgres
+#          sudo install -d -o shop-postgres /var/lib/shop-postgres /opt/shop-postgres /etc/shop-postgres
+#          put the variables from .env.example in /etc/shop-postgres/env (chmod 600)
+#          sudo systemctl enable --now shop-postgres
+[Unit]
+Description=shop-postgres API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shop-postgres
+Group=shop-postgres
+EnvironmentFile=/etc/shop-postgres/env
+WorkingDirectory=/var/lib/shop-postgres
+ExecStart=/opt/shop-postgres/api
+Restart=on-failure
+RestartSec=2
+# Longer than the drain delay (5s) plus the shutdown timeout (30s).
+TimeoutStopSec=40
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/shop-postgres
+
+[Install]
+WantedBy=multi-user.target

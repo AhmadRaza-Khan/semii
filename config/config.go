@@ -75,6 +75,7 @@ type Error struct {
 	Problems []Problem
 }
 
+// Error implements error, listing every problem on its own line.
 func (e *Error) Error() string {
 	var b strings.Builder
 	n := len(e.Problems)

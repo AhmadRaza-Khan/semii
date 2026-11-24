@@ -1,0 +1,7 @@
+# semii project settings. Generators read this file; keep it in version control.
+semii: v0.3.0-dev
+template: 1
+module: github.com/AhmadRaza-Khan/semii/examples/shop-postgres
+db: postgres
+auth: [jwt, apikey]
+id: uuid

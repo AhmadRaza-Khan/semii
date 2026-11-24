@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+bin/
+tmp/
+.semii/tmp/
+*.test
+*.out
+coverage.*
+{{- if .SQLite}}
+*.db
+*.db-wal
+*.db-shm
+{{- end}}
