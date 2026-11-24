@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AhmadRaza-Khan/semii/db/migrate"
+	"github.com/AhmadRaza-Khan/semii/db/mongodb"
 	"github.com/AhmadRaza-Khan/semii/internal/gen"
 )
 
@@ -78,7 +80,18 @@ func runDoctor(e *Env, args []string) error {
 		return summarize(results)
 	}
 	ctx := context.Background()
-	db, err := openSQL(ctx, cfg.DatabaseURL.Reveal())
+	if p.DB == "mongo" {
+		client, _, err := mongodb.Open(ctx, cfg.DatabaseURL.Reveal(), "admin", mongodb.Options{Timeout: 5 * time.Second})
+		if err != nil {
+			add("FAIL", "database", err.Error())
+			return summarize(results)
+		}
+		_ = client.Disconnect(ctx)
+		add("PASS", "database", "reachable")
+		add("PASS", "indexes", "ensured by `semii migrate up` (not checked)")
+		return summarize(results)
+	}
+	db, err := openSQL(ctx, p, cfg.DatabaseURL.Reveal())
 	if err != nil {
 		add("FAIL", "database", err.Error())
 		return summarize(results)
@@ -86,7 +99,7 @@ func runDoctor(e *Env, args []string) error {
 	defer db.Close()
 	add("PASS", "database", "reachable")
 
-	n, err := migrate.Pending(ctx, db, os.DirFS(filepath.Join(p.Root, "db", "migrations")))
+	n, err := migrate.Pending(ctx, db, os.DirFS(filepath.Join(p.Root, "db", "migrations")), dialect(p.DB))
 	switch {
 	case err != nil:
 		add("FAIL", "migrations", err.Error())

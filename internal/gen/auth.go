@@ -19,11 +19,12 @@ var strategyCtors = map[string]string{
 	"session": "newSessionStrategy", "jwt": "newJWTStrategy", "apikey": "newAPIKeyStrategy",
 }
 
-// strategy files: Go source, its test, and the table it needs.
-var strategyFiles = map[string]struct{ table, migration, queries string }{
-	"session": {"sessions", "sessions", "sessions"},
-	"jwt":     {"refresh_tokens", "refresh", "refresh"},
-	"apikey":  {"api_keys", "apikeys", "apikeys"},
+// strategy files: the table (collection) it needs, its SQL template stem
+// and its store file.
+var strategyFiles = map[string]struct{ table, sql, store, indexes string }{
+	"session": {"sessions", "sessions", "session_store", "SessionIndexes"},
+	"jwt":     {"refresh_tokens", "refresh", "refresh_store", "RefreshIndexes"},
+	"apikey":  {"api_keys", "apikeys", "apikey_store", "APIKeyIndexes"},
 }
 
 // AuthData is the template data for `semii generate auth`.
@@ -31,27 +32,92 @@ type AuthData struct {
 	Version    string
 	Module     string
 	Semii      string
+	DB         string
 	ID         string
 	Strategies []string // every generated strategy after this run
 }
 
 // UUID reports UUID primary keys.
-func (d AuthData) UUID() bool { return d.ID != "bigint" }
+func (d AuthData) UUID() bool { return d.ID == "uuid" || d.ID == "" }
+
+// SeqID reports database-assigned integer ids.
+func (d AuthData) SeqID() bool { return d.ID == "bigint" }
+
+// ObjectID reports MongoDB ObjectID ids.
+func (d AuthData) ObjectID() bool { return d.ID == "objectid" }
+
+// Database predicates for templates.
+func (d AuthData) Postgres() bool { return d.DB == "postgres" }
+func (d AuthData) MySQL() bool    { return d.DB == "mysql" }
+func (d AuthData) SQLite() bool   { return d.DB == "sqlite" }
+func (d AuthData) Mongo() bool    { return d.DB == "mongo" }
+
+// DBType is the type of App.DB, which Wire and the factories take.
+func (d AuthData) DBType() string {
+	switch d.DB {
+	case "postgres":
+		return "*pgxpool.Pool"
+	case "mongo":
+		return "*mongo.Database"
+	}
+	return "*sql.DB"
+}
+
+// connVar is the name of the database handle in the generated newApp.
+func connVar(db string) string {
+	switch db {
+	case "postgres":
+		return "pool"
+	case "mongo":
+		return "mdb"
+	}
+	return "sqlDB"
+}
 
 // IDGo is the Go type of user ids.
 func (d AuthData) IDGo() string {
-	if d.UUID() {
-		return "uuid.UUID"
+	switch d.ID {
+	case "bigint":
+		return "int64"
+	case "objectid":
+		return "bson.ObjectID"
 	}
-	return "int64"
+	return "uuid.UUID"
 }
 
 // IDSQL is the column type of user id foreign keys.
 func (d AuthData) IDSQL() string {
-	if d.UUID() {
-		return "UUID"
+	switch {
+	case d.SeqID():
+		return "BIGINT"
+	case d.MySQL():
+		return "CHAR(36)"
 	}
-	return "BIGINT"
+	return "UUID"
+}
+
+// IDPrimaryKey is the users/api_keys primary key column definition.
+func (d AuthData) IDPrimaryKey() string {
+	switch {
+	case d.SeqID() && d.MySQL():
+		return "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	case d.SeqID() && d.SQLite():
+		return "INTEGER PRIMARY KEY AUTOINCREMENT"
+	case d.SeqID():
+		return "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+	}
+	return d.IDSQL() + " PRIMARY KEY"
+}
+
+// TimeSQL is the timestamp column type.
+func (d AuthData) TimeSQL() string {
+	switch d.DB {
+	case "mysql":
+		return "DATETIME(6)"
+	case "sqlite":
+		return "DATETIME"
+	}
+	return "TIMESTAMPTZ"
 }
 
 // Has reports whether strategy is generated.
@@ -71,9 +137,6 @@ type AuthOptions struct {
 // strategy list for .semii.yaml.
 func PlanAuth(rd Renderer, o AuthOptions) (*Plan, Project, error) {
 	p := o.Project
-	if p.DB != "postgres" {
-		return nil, Project{}, fmt.Errorf("db %q: auth templates for %s arrive in milestone M5; only postgres is available", p.DB, p.DB)
-	}
 	var add []string
 	for _, s := range o.Strategies {
 		if !slices.Contains(authStrategies, s) {
@@ -95,10 +158,11 @@ func PlanAuth(rd Renderer, o AuthOptions) (*Plan, Project, error) {
 		return nil, Project{}, fmt.Errorf("internal/auth already exists but .semii.yaml lists no strategies; fix .semii.yaml")
 	}
 
-	data := AuthData{Version: o.Version, Module: p.Module, Semii: SemiiModule, ID: p.ID, Strategies: final}
+	data := AuthData{Version: o.Version, Module: p.Module, Semii: SemiiModule, DB: p.DB, ID: p.ID, Strategies: final}
 	plan := &Plan{Root: p.Root}
+	dir := dbDir(p.DB) + "/auth/"
 	render := func(tmpl, target string) error {
-		out, err := rd.Render("postgres/auth/"+tmpl, filepath.Join(p.Root, target), data)
+		out, err := rd.Render(tmpl, filepath.Join(p.Root, target), data)
 		if err != nil {
 			return err
 		}
@@ -107,45 +171,65 @@ func PlanAuth(rd Renderer, o AuthOptions) (*Plan, Project, error) {
 	}
 
 	versions := migrationVersions(p.Root, o.Now, len(add)+1)
+	sqlDB := p.DB != "mongo"
+	var mongoIndexes []markerLine
 	if fresh {
 		for _, f := range []string{"auth", "model", "service", "handler", "routes", "mailer", "seed"} {
-			if err := render(f+".go.tmpl", "internal/auth/"+f+".go"); err != nil {
+			if err := render("common/auth/"+f+".go.tmpl", "internal/auth/"+f+".go"); err != nil {
 				return nil, Project{}, err
 			}
 		}
 		for _, f := range []string{"helpers", "auth"} {
-			if err := render(f+"_test.go.tmpl", "internal/auth/"+f+"_test.go"); err != nil {
+			if err := render("common/auth/"+f+"_test.go.tmpl", "internal/auth/"+f+"_test.go"); err != nil {
 				return nil, Project{}, err
 			}
 		}
-		if err := render("users.migration.sql.tmpl", "db/migrations/"+versions[0]+"_create_users.sql"); err != nil {
+		if err := render(dir+"store.go.tmpl", "internal/auth/store.go"); err != nil {
 			return nil, Project{}, err
 		}
-		if err := render("users.queries.sql.tmpl", "db/queries/auth_users.sql"); err != nil {
-			return nil, Project{}, err
+		if sqlDB {
+			if err := render(dir+"users.migration.sql.tmpl", "db/migrations/"+versions[0]+"_create_users.sql"); err != nil {
+				return nil, Project{}, err
+			}
+			if err := render(dir+"users.queries.sql.tmpl", "db/queries/auth_users.sql"); err != nil {
+				return nil, Project{}, err
+			}
 		}
-		if err := render("factory_user.go.tmpl", "internal/factory/user.go"); err != nil {
+		mongoIndexes = append(mongoIndexes, markerLine{"indexes", `"users": auth.UserIndexes(),`},
+			markerLine{"indexes", `"auth_tokens": auth.AuthTokenIndexes(),`})
+		if err := render("common/auth/factory_user.go.tmpl", "internal/factory/user.go"); err != nil {
 			return nil, Project{}, err
 		}
 	}
 	for i, s := range add {
 		f := strategyFiles[s]
-		if err := render(s+".go.tmpl", "internal/auth/"+s+".go"); err != nil {
+		if err := render("common/auth/"+s+".go.tmpl", "internal/auth/"+s+".go"); err != nil {
 			return nil, Project{}, err
 		}
-		if err := render(s+"_test.go.tmpl", "internal/auth/"+s+"_test.go"); err != nil {
+		if err := render("common/auth/"+s+"_test.go.tmpl", "internal/auth/"+s+"_test.go"); err != nil {
 			return nil, Project{}, err
 		}
-		if err := render(f.migration+".migration.sql.tmpl", "db/migrations/"+versions[i+1]+"_create_"+f.table+".sql"); err != nil {
+		if err := render(dir+f.store+".go.tmpl", "internal/auth/"+f.store+".go"); err != nil {
 			return nil, Project{}, err
 		}
-		if err := render(f.queries+".queries.sql.tmpl", "db/queries/auth_"+f.table+".sql"); err != nil {
-			return nil, Project{}, err
-		}
-		if s == "jwt" {
-			if err := render("factory_token.go.tmpl", "internal/factory/token.go"); err != nil {
+		if sqlDB {
+			if err := render(dir+f.sql+".migration.sql.tmpl", "db/migrations/"+versions[i+1]+"_create_"+f.table+".sql"); err != nil {
 				return nil, Project{}, err
 			}
+			if err := render(dir+f.sql+".queries.sql.tmpl", "db/queries/auth_"+f.table+".sql"); err != nil {
+				return nil, Project{}, err
+			}
+		}
+		mongoIndexes = append(mongoIndexes, markerLine{"indexes", fmt.Sprintf("%q: auth.%s(),", f.table, f.indexes)})
+		if s == "jwt" {
+			if err := render("common/auth/factory_token.go.tmpl", "internal/factory/token.go"); err != nil {
+				return nil, Project{}, err
+			}
+		}
+	}
+	if !sqlDB {
+		if err := planEdit(plan, p.Root, fileEdit{"db/mongo/indexes.go", mongoIndexes, []string{p.Module + "/internal/auth"}}); err != nil {
+			return nil, Project{}, err
 		}
 	}
 
@@ -159,7 +243,7 @@ func PlanAuth(rd Renderer, o AuthOptions) (*Plan, Project, error) {
 				{"config", "SMTP semiiauth.SMTPConfig `envPrefix:\"SMTP_\"`"},
 			}, []string{semiiAuth}},
 			{"internal/app/app.go", []markerLine{
-				{"wiring", "authH, authN, authErr := auth.Wire(cfg, pool, log)"},
+				{"wiring", "authH, authN, authErr := auth.Wire(cfg, " + connVar(p.DB) + ", log)"},
 				{"wiring", "d.Auth = authH"},
 				{"wiring", "mw = append(mw, semiiauth.Middleware(authN...))"},
 				{"wiring", "problems = append(problems, authErr, cfg.Auth.Validate())"},
@@ -216,7 +300,7 @@ if err != nil {
 	return err
 }
 if admin.Email != "" {
-	if err := auth.SeedAdmin(ctx, d.Pool, admin.Email, admin.Password.Reveal()); err != nil {
+	if err := auth.SeedAdmin(ctx, d.DB, admin.Email, admin.Password.Reveal()); err != nil {
 		return err
 	}
 	d.Log.Info("admin user seeded", "email", admin.Email)

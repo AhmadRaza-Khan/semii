@@ -1,0 +1,85 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"{{.Semii}}/db"
+	"{{.Semii}}/db/mongodb"
+)
+
+func (s *store) refreshTokens() *mongo.Collection { return s.db.Collection("refresh_tokens") }
+
+// RefreshIndexes are the refresh_tokens collection's indexes; expired
+// tokens are removed by a TTL index.
+func RefreshIndexes() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		{Keys: bson.D{ {Key: "family_id", Value: 1} }},
+		{Keys: bson.D{ {Key: "user_id", Value: 1} }},
+		{Keys: bson.D{ {Key: "expires_at", Value: 1} }, Options: options.Index().SetExpireAfterSeconds(0)},
+	}
+}
+
+type refreshDoc struct {
+	Hash      string        `bson:"_id"`
+	FamilyID  string        `bson:"family_id"`
+	UserID    bson.ObjectID `bson:"user_id"`
+	ExpiresAt time.Time     `bson:"expires_at"`
+	UsedAt    *time.Time    `bson:"used_at,omitempty"`
+	RevokedAt *time.Time    `bson:"revoked_at,omitempty"`
+	CreatedAt time.Time     `bson:"created_at"`
+}
+
+func (d refreshDoc) row() refreshRow {
+	return refreshRow{Hash: d.Hash, FamilyID: uuid.MustParse(d.FamilyID), UserID: d.UserID, ExpiresAt: d.ExpiresAt,
+		CreatedAt: d.CreatedAt, UsedAt: d.UsedAt, RevokedAt: d.RevokedAt}
+}
+
+func (s *store) CreateRefreshToken(ctx context.Context, r refreshRow) error {
+	_, err := s.refreshTokens().InsertOne(ctx, refreshDoc{Hash: r.Hash, FamilyID: r.FamilyID.String(), UserID: r.UserID,
+		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt})
+	return err
+}
+
+// ConsumeRefreshToken marks an unused, unrevoked token used (atomically);
+// db.ErrNotFound otherwise.
+func (s *store) ConsumeRefreshToken(ctx context.Context, hash string, at time.Time) (refreshRow, error) {
+	var d refreshDoc
+	err := s.refreshTokens().FindOneAndUpdate(ctx,
+		bson.M{"_id": hash, "used_at": bson.M{"$exists": false}, "revoked_at": bson.M{"$exists": false}},
+		bson.M{"$set": bson.M{"used_at": at}}).Decode(&d)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return refreshRow{}, db.ErrNotFound
+	}
+	if err != nil {
+		return refreshRow{}, err
+	}
+	return d.row(), nil
+}
+
+func (s *store) GetRefreshToken(ctx context.Context, hash string) (refreshRow, error) {
+	var d refreshDoc
+	if err := s.refreshTokens().FindOne(ctx, bson.M{"_id": hash}).Decode(&d); err != nil {
+		return refreshRow{}, mongodb.MapError(err)
+	}
+	return d.row(), nil
+}
+
+func (s *store) RevokeRefreshFamily(ctx context.Context, family uuid.UUID, at time.Time) error {
+	_, err := s.refreshTokens().UpdateMany(ctx,
+		bson.M{"family_id": family.String(), "revoked_at": bson.M{"$exists": false}},
+		bson.M{"$set": bson.M{"revoked_at": at}})
+	return err
+}
+
+func (s *store) RevokeUserRefreshTokens(ctx context.Context, id bson.ObjectID, at time.Time) error {
+	_, err := s.refreshTokens().UpdateMany(ctx,
+		bson.M{"user_id": id, "revoked_at": bson.M{"$exists": false}},
+		bson.M{"$set": bson.M{"revoked_at": at}})
+	return err
+}

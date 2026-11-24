@@ -1,0 +1,93 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+	"{{.Module}}/db/sqlc"
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/db/sqldb"
+)
+
+func apiKeyFromRow(r sqlc.ApiKey) APIKey {
+	return APIKey{ID: r.ID, Name: r.Name, Prefix: r.Prefix, Scopes: decodeList(r.Scopes),
+		ExpiresAt: r.ExpiresAt, LastUsedAt: r.LastUsedAt, CreatedAt: r.CreatedAt.UTC()}
+}
+
+func (s *store) CreateAPIKey(ctx context.Context, r apiKeyRow) (APIKey, error) {
+	q := s.queries(ctx)
+{{- if not .SeqID}}
+	id := newID()
+{{- end}}
+	{{if .SeqID}}res{{else}}_{{end}}, err := q.CreateAPIKey(ctx, sqlc.CreateAPIKeyParams{
+{{- if not .SeqID}}
+		ID: id,
+{{- end}}
+		UserID: r.UserID, Name: r.Name, Prefix: r.Prefix, SecretHash: r.SecretHash,
+		Scopes: encodeList(r.Scopes), ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+	})
+	if err != nil {
+		return APIKey{}, sqldb.MapError(err)
+	}
+{{- if .SeqID}}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return APIKey{}, err
+	}
+{{- end}}
+	row, err := q.GetAPIKey(ctx, id)
+	if err != nil {
+		return APIKey{}, sqldb.MapError(err)
+	}
+	return apiKeyFromRow(row), nil
+}
+
+// FindAPIKey implements semiiauth.APIKeyStore.
+func (s *store) FindAPIKey(ctx context.Context, prefix string) (semiiauth.APIKey, error) {
+	row, err := s.queries(ctx).FindAPIKeyByPrefix(ctx, prefix)
+	if err != nil {
+		return semiiauth.APIKey{}, sqldb.MapError(err)
+	}
+	return semiiauth.APIKey{
+		ID: fmt.Sprint(row.ID), OwnerID: IDString(row.UserID), Scopes: decodeList(row.Scopes), SecretHash: row.SecretHash,
+		ExpiresAt: row.ExpiresAt, RevokedAt: row.RevokedAt, LastUsedAt: row.LastUsedAt,
+	}, nil
+}
+
+// TouchAPIKey implements semiiauth.APIKeyStore.
+func (s *store) TouchAPIKey(ctx context.Context, id string, at time.Time) error {
+{{- if .SeqID}}
+	keyID, err := strconv.ParseInt(id, 10, 64)
+{{- else}}
+	keyID, err := uuid.Parse(id)
+{{- end}}
+	if err != nil {
+		return err
+	}
+	return s.queries(ctx).TouchAPIKey(ctx, sqlc.TouchAPIKeyParams{LastUsedAt: &at, ID: keyID})
+}
+
+func (s *store) ListAPIKeys(ctx context.Context, owner {{.IDGo}}) ([]APIKey, error) {
+	rows, err := s.queries(ctx).ListAPIKeys(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]APIKey, len(rows))
+	for i, row := range rows {
+		keys[i] = apiKeyFromRow(row)
+	}
+	return keys, nil
+}
+
+// RevokeAPIKey revokes id if owner owns it, returning how many keys changed.
+func (s *store) RevokeAPIKey(ctx context.Context, id, owner {{.IDGo}}, at time.Time) (int64, error) {
+	return s.queries(ctx).RevokeAPIKey(ctx, sqlc.RevokeAPIKeyParams{RevokedAt: &at, ID: id, UserID: owner})
+}
+
+// expireAPIKey sets a key's expiry (tests).
+func (s *store) expireAPIKey(ctx context.Context, prefix string, at time.Time) error {
+	return s.queries(ctx).ExpireAPIKey(ctx, sqlc.ExpireAPIKeyParams{ExpiresAt: &at, Prefix: prefix})
+}

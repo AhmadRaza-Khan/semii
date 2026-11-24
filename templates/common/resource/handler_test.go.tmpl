@@ -1,0 +1,102 @@
+package {{.Pkg}}_test
+
+import (
+	"fmt"
+	"net/http"
+	"testing"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"{{.Module}}/db/sqlc"
+	"{{.Module}}/internal/app/apptest"
+	"{{.Module}}/internal/factory"
+	"{{.Module}}/internal/{{.Pkg}}"
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/testkit"
+	"{{.Semii}}/web"
+)
+
+func TestMain(m *testing.M) { testkit.Main(m) }
+
+func Test{{.Name}}API(t *testing.T) {
+	a, c := apptest.New(t)
+	q := {{.FactoryArg}}
+{{- if not .Public}}
+
+	t.Run("requires authentication", func(t *testing.T) {
+		c.GET("{{.Route}}").Do().ExpectProblem(http.StatusUnauthorized, "unauthenticated")
+	})
+	c = c.As(&semiiauth.Principal{ID: "test-user", Kind: semiiauth.KindUser})
+{{- end}}
+	path := func(id {{.IDGo}}) string { return "{{.Route}}/" + {{.Pkg}}.IDString(id) }
+
+	t.Run("create", func(t *testing.T) {
+		in := factory.{{.Name}}Input(t, q)
+		var got {{.Pkg}}.{{.Name}}
+		res := c.POST("{{.Route}}").JSON(in).Do().ExpectStatus(http.StatusCreated).Decode(&got)
+		res.ExpectHeader("Location", path(got.ID))
+	})
+{{- if .HasNull}}
+
+	t.Run("create with nulls", func(t *testing.T) {
+		in := factory.{{.Name}}Input(t, q)
+{{- range .Fields}}{{if .Null}}
+		in.{{.GoName}} = nil
+{{- end}}{{end}}
+		var got {{.Pkg}}.{{.Name}}
+		c.POST("{{.Route}}").JSON(in).Do().ExpectStatus(http.StatusCreated).Decode(&got)
+		c.GET(path(got.ID)).Do().ExpectStatus(http.StatusOK)
+		c.GET("{{.Route}}").Do().ExpectStatus(http.StatusOK)
+	})
+{{- end}}
+{{- with .RequiredField}}
+
+	t.Run("create rejects invalid input", func(t *testing.T) {
+		c.POST("{{$.Route}}").JSON(map[string]any{}).Do().
+			ExpectProblem(http.StatusUnprocessableEntity, "validation_failed").
+			ExpectFieldError("{{.Col}}", "required")
+	})
+{{- end}}
+
+	t.Run("get", func(t *testing.T) {
+		o := factory.{{.Name}}(t, q)
+		c.GET(path(o.ID)).Do().ExpectStatus(http.StatusOK).ExpectJSON(map[string]any{"id": o.ID})
+	})
+
+	t.Run("get missing", func(t *testing.T) {
+		c.GET("{{.Route}}/" + {{.MissingID}}).Do().ExpectProblem(http.StatusNotFound, "not_found")
+	})
+
+	t.Run("list paginates", func(t *testing.T) {
+		for range 3 {
+			factory.{{.Name}}(t, q)
+		}
+		var page web.CursorPage[{{.Pkg}}.{{.Name}}]
+		c.GET("{{.Route}}").Query("limit", "2").Do().ExpectStatus(http.StatusOK).Decode(&page)
+		if len(page.Data) != 2 || page.NextCursor == nil {
+			t.Fatalf("page 1: %d items, next_cursor %v", len(page.Data), page.NextCursor)
+		}
+		var page2 web.CursorPage[{{.Pkg}}.{{.Name}}]
+		c.GET("{{.Route}}").Query("limit", "2").Query("cursor", *page.NextCursor).Do().
+			ExpectStatus(http.StatusOK).Decode(&page2)
+		if len(page2.Data) == 0 || page2.Data[0].ID == page.Data[1].ID {
+			t.Fatalf("page 2 did not continue after page 1: %+v", page2.Data)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		o := factory.{{.Name}}(t, q)
+{{- with .PatchField}}
+		c.PATCH(path(o.ID)).JSON(map[string]any{"{{.Col}}": {{.AltSample "int64(1)"}}}).Do().
+			ExpectStatus(http.StatusOK).ExpectJSON(map[string]any{"{{.Col}}": {{.AltSample "int64(1)"}}})
+{{- else}}
+		c.PATCH(path(o.ID)).JSON(map[string]any{}).Do().ExpectStatus(http.StatusOK)
+{{- end}}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		o := factory.{{.Name}}(t, q)
+		c.DELETE(path(o.ID)).Do().ExpectStatus(http.StatusNoContent)
+		c.GET(path(o.ID)).Do().ExpectProblem(http.StatusNotFound, "not_found")
+	})
+}

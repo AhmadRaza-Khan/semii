@@ -18,8 +18,15 @@ type ProjectData struct {
 	SemiiVersion string // version required in go.mod
 	LocalSemii   string // replace target for a local framework checkout
 	DBName       string
+	DB           string // postgres | mysql | sqlite | mongo
 	ID           string
 }
+
+// Database predicates for templates.
+func (d ProjectData) Postgres() bool { return d.DB == "postgres" }
+func (d ProjectData) MySQL() bool    { return d.DB == "mysql" }
+func (d ProjectData) SQLite() bool   { return d.DB == "sqlite" }
+func (d ProjectData) Mongo() bool    { return d.DB == "mongo" }
 
 // NewOptions are the inputs of PlanNew.
 type NewOptions struct {
@@ -36,7 +43,6 @@ var projectFiles = map[string]string{
 	"gitignore.tmpl":                       ".gitignore",
 	"env.example.tmpl":                     ".env.example",
 	"Makefile.tmpl":                        "Makefile",
-	"sqlc.yaml.tmpl":                       "sqlc.yaml",
 	"README.md.tmpl":                       "README.md",
 	"cmd/api/main.go.tmpl":                 "cmd/api/main.go",
 	"internal/app/app.go.tmpl":             "internal/app/app.go",
@@ -44,14 +50,16 @@ var projectFiles = map[string]string{
 	"internal/app/apptest/apptest.go.tmpl": "internal/app/apptest/apptest.go",
 	"internal/config/config.go.tmpl":       "internal/config/config.go",
 	"internal/factory/factory.go.tmpl":     "internal/factory/factory.go",
-	"db/embed.go.tmpl":                     "db/embed.go",
 	"db/seeds/seed.go.tmpl":                "db/seeds/seed.go",
 }
 
 // PlanNew builds the plan for a new project rooted at root.
 func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
-	if o.DB != "postgres" {
-		return nil, Project{}, fmt.Errorf("--db %s: templates for %s arrive in milestone M5; use --db postgres", o.DB, o.DB)
+	if o.DB == "mongo" {
+		if o.ID != "" && o.ID != "uuid" && o.ID != "objectid" {
+			return nil, Project{}, fmt.Errorf("--id %s: mongo projects use ObjectID ids", o.ID)
+		}
+		o.ID = "objectid"
 	}
 	// Auth strategies are added afterwards by PlanAuth, which records them.
 	proj := Project{
@@ -64,7 +72,7 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 	data := ProjectData{
 		Name: o.Name, Module: o.Module, Version: o.Version, Semii: SemiiModule,
 		SemiiVersion: requireVersion(o.Version), LocalSemii: o.LocalSemii,
-		DBName: Snake(o.Name), ID: o.ID,
+		DBName: Snake(o.Name), DB: o.DB, ID: o.ID,
 	}
 	if data.DBName == "" {
 		data.DBName = "app"
@@ -72,27 +80,28 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 
 	plan := &Plan{Root: root}
 	plan.Add(ProjectFile, proj.Marshal())
-	for _, tmpl := range sortedKeys(projectFiles) {
-		target := projectFiles[tmpl]
-		out, err := rd.Render(path.Join("postgres/project", tmpl), path.Join(root, target), data)
+	files := maps.Clone(projectFiles)
+	if o.DB == "mongo" {
+		files["db/mongo/indexes.go.tmpl"] = "db/mongo/indexes.go"
+	} else {
+		files["sqlc.yaml.tmpl"] = "sqlc.yaml"
+		files["db/embed.go.tmpl"] = "db/embed.go"
+		files["db/migrations/init.sql.tmpl"] = "db/migrations/" + o.Now.UTC().Format("20060102150405") + "_init.sql"
+	}
+	if o.Docker && o.DB != "sqlite" {
+		files["docker-compose.yml.tmpl"] = "docker-compose.yml"
+	}
+	for _, tmpl := range sortedKeys(files) {
+		target := files[tmpl]
+		out, err := rd.Render(path.Join("common/project", tmpl), path.Join(root, target), data)
 		if err != nil {
 			return nil, Project{}, err
 		}
 		plan.Add(target, out)
 	}
-	if o.Docker {
-		out, err := rd.Render("postgres/project/docker-compose.yml.tmpl", "docker-compose.yml", data)
-		if err != nil {
-			return nil, Project{}, err
-		}
-		plan.Add("docker-compose.yml", out)
+	if o.DB != "mongo" {
+		plan.Add("db/queries/.gitkeep", []byte{})
 	}
-	initSQL, err := rd.Render("postgres/project/db/migrations/init.sql.tmpl", "init.sql", data)
-	if err != nil {
-		return nil, Project{}, err
-	}
-	plan.Add("db/migrations/"+o.Now.UTC().Format("20060102150405")+"_init.sql", initSQL)
-	plan.Add("db/queries/.gitkeep", []byte{})
 	return plan, proj, nil
 }
 

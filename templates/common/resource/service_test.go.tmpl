@@ -1,0 +1,115 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"github.com/shopspring/decimal"
+	"{{.Semii}}/db"
+	"{{.Semii}}/web"
+)
+
+{{- if .NeedsPtr}}
+func ptr[T any](v T) *T { return &v }
+{{- end}}
+
+// sampleInput returns a valid CreateInput; n makes unique fields unique.
+func sampleInput(n int64) CreateInput {
+	_ = n
+	return CreateInput{
+{{- range .Fields}}
+		{{.GoName}}: {{.SampleFor "n" "ptr"}},
+{{- end}}
+	}
+}
+
+func TestServiceCRUD(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewFakeRepo())
+
+	created, err := svc.Create(ctx, sampleInput(1))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := svc.Get(ctx, created.ID)
+	if err != nil || got.ID != created.ID {
+		t.Fatalf("get: %+v, %v", got, err)
+	}
+{{- with .PatchField}}
+	updated, err := svc.Update(ctx, created.ID, UpdateInput{ {{- .GoName}}: ptr({{.AltSample "2"}})})
+	if err != nil || updated.{{.GoName}} != {{.AltSample "2"}} {
+		t.Fatalf("update: %+v, %v", updated, err)
+	}
+{{- else}}
+	if _, err := svc.Update(ctx, created.ID, UpdateInput{}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+{{- end}}
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if err := svc.Delete(ctx, created.ID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("delete twice: %v", err)
+	}
+}
+
+func TestServiceListPaginates(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewFakeRepo())
+	for i := range 3 {
+		if _, err := svc.Create(ctx, sampleInput(int64(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, next, err := svc.List(ctx, ListFilter{}, web.CursorParams{Limit: 2})
+	if err != nil || len(page) != 2 || next == nil {
+		t.Fatalf("page 1: %d items, next %v, err %v", len(page), next, err)
+	}
+	p, err := web.ParseCursor(httptest.NewRequest("GET", "/?limit=2&cursor="+*next, nil), 20, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page2, next, err := svc.List(ctx, ListFilter{}, p)
+	if err != nil || len(page2) != 1 || next != nil || page2[0].ID == page[1].ID {
+		t.Fatalf("page 2: %+v, next %v, err %v", page2, next, err)
+	}
+}
+{{- if .Uniques}}
+
+func TestServiceUniqueConflict(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewFakeRepo())
+	in := sampleInput(1)
+	if _, err := svc.Create(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(ctx, in); !errors.Is(err, db.ErrConflict) {
+		t.Fatalf("duplicate create: %v", err)
+	}
+}
+{{- end}}
+
+func TestServiceRepoErrors(t *testing.T) {
+	ctx := context.Background()
+	repo := NewFakeRepo()
+	svc := NewService(repo)
+	boom := errors.New("boom")
+	repo.FailNext("Create", boom)
+	if _, err := svc.Create(ctx, sampleInput(1)); !errors.Is(err, boom) {
+		t.Fatalf("create: %v", err)
+	}
+	repo.FailNext("List", boom)
+	if _, _, err := svc.List(ctx, ListFilter{}, web.CursorParams{Limit: 1}); !errors.Is(err, boom) {
+		t.Fatalf("list: %v", err)
+	}
+}

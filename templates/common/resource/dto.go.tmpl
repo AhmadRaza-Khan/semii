@@ -1,0 +1,56 @@
+package {{.Pkg}}
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"github.com/shopspring/decimal"
+	"{{.Semii}}/web"
+)
+
+// CreateInput is the body of POST {{.Route}}.
+type CreateInput struct {
+{{- range .Fields}}
+	{{.GoName}} {{.CreateType}} {{tag "json" .Col "validate" .CreateValidate}}
+{{- end}}
+}
+
+// UpdateInput is the body of PATCH {{.Route}}/{id}. Absent fields are left
+// unchanged{{if .HasNull}}; nullable fields accept null to clear them{{end}}.
+type UpdateInput struct {
+{{- range .Fields}}
+	{{.GoName}} {{.UpdateType}} {{tag "json" .Col "validate" .UpdateValidate}}
+{{- end}}
+}
+
+// ListFilter holds the optional query filters of GET {{.Route}}.
+type ListFilter struct {
+{{- range .Filters}}
+	{{.GoName}} {{.FilterType}} `query:"{{.Col}}"`
+{{- end}}
+}
+
+// apply copies the fields set in in onto o (PATCH semantics).
+func (in UpdateInput) apply(o *{{.Name}}) {
+{{- range .Fields}}
+{{- if .Null}}
+	if in.{{.GoName}}.Set {
+{{- if .IsJSON}}
+		o.{{.GoName}} = in.{{.GoName}}.Value
+{{- else}}
+		o.{{.GoName}} = in.{{.GoName}}.Ptr()
+{{- end}}
+	}
+{{- else if .IsJSON}}
+	if in.{{.GoName}} != nil {
+		o.{{.GoName}} = in.{{.GoName}}
+	}
+{{- else}}
+	if in.{{.GoName}} != nil {
+		o.{{.GoName}} = *in.{{.GoName}}
+	}
+{{- end}}
+{{- end}}
+}

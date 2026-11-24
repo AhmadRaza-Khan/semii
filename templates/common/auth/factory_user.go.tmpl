@@ -1,0 +1,36 @@
+package factory
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"{{.Module}}/internal/auth"
+)
+
+// UserInput adjusts the account User creates.
+type UserInput struct {
+	Email    string
+	Password string
+	Roles    []string
+	Verified bool
+}
+
+// User creates an account (verified by default) and returns it with its
+// password.
+func User(t testing.TB, conn {{.DBType}}, opts ...func(*UserInput)) (auth.User, string) {
+	t.Helper()
+	n := Next()
+	in := UserInput{Email: fmt.Sprintf("user%d@example.com", n), Password: fmt.Sprintf("factory-password-%d", n), Verified: true}
+	for _, opt := range opts {
+		opt(&in)
+	}
+	u, err := auth.CreateUser(context.Background(), conn, in.Email, in.Password, in.Roles, in.Verified)
+	if err != nil {
+		t.Fatalf("factory.User: %v", err)
+	}
+	return u, in.Password
+}

@@ -1,0 +1,164 @@
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"slices"
+	"time"
+
+	"{{.Module}}/db/sqlc"
+	"{{.Semii}}/db"
+	"{{.Semii}}/db/sqldb"
+)
+
+// store persists accounts on {{if .MySQL}}MySQL{{else}}SQLite{{end}} with the sqlc queries in
+// db/queries/auth_*.sql. Each strategy adds its methods in its own
+// *_store.go file.
+type store struct {
+	db *sql.DB
+	q  *sqlc.Queries
+}
+
+func newStore(sdb *sql.DB) *store { return &store{db: sdb, q: sqlc.New(sdb)} }
+
+type txKey struct{}
+
+// queries returns queries bound to the transaction in ctx, if any.
+func (s *store) queries(ctx context.Context) *sqlc.Queries {
+	if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
+		return s.q.WithTx(tx)
+	}
+	return s.q
+}
+
+// InTx runs fn in a transaction carried by its context.
+func (s *store) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return sqldb.WithTx(ctx, s.db, func(tx *sql.Tx) error { return fn(context.WithValue(ctx, txKey{}, tx)) }, nil)
+}
+
+// encodeList stores roles and scopes as a JSON array.
+func encodeList(v []string) sqldb.JSON {
+	if v == nil {
+		v = []string{}
+	}
+	b, _ := json.Marshal(v)
+	return b
+}
+
+func decodeList(raw sqldb.JSON) []string {
+	out := []string{}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func userFromRow(r sqlc.User) User {
+	return User{
+		ID: r.ID, Email: r.Email, Roles: decodeList(r.Roles), EmailVerified: r.EmailVerifiedAt != nil,
+		CreatedAt: r.CreatedAt.UTC(), passwordHash: r.PasswordHash, failedLogins: r.FailedLogins, lockedUntil: r.LockedUntil,
+	}
+}
+
+// CreateUser inserts u; created is false when the email is taken.
+func (s *store) CreateUser(ctx context.Context, u newUser) (User, bool, error) {
+	q := s.queries(ctx)
+{{- if not .SeqID}}
+	id := newID()
+{{- end}}
+	res, err := q.CreateUser(ctx, sqlc.CreateUserParams{
+{{- if not .SeqID}}
+		ID: id,
+{{- end}}
+		Email: u.Email, PasswordHash: u.PasswordHash, Roles: encodeList(nil), CreatedAt: u.CreatedAt, UpdatedAt: u.CreatedAt,
+	})
+	if err != nil {
+		return User{}, false, sqldb.MapError(err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		existing, err := s.UserByEmail(ctx, u.Email)
+		return existing, false, err
+	}
+{{- if .SeqID}}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return User{}, false, err
+	}
+{{- end}}
+	created, err := s.UserByID(ctx, id)
+	return created, true, err
+}
+
+func (s *store) UserByEmail(ctx context.Context, email string) (User, error) {
+	row, err := s.queries(ctx).GetUserByEmail(ctx, email)
+	if err != nil {
+		return User{}, sqldb.MapError(err)
+	}
+	return userFromRow(row), nil
+}
+
+func (s *store) UserByID(ctx context.Context, id {{.IDGo}}) (User, error) {
+	row, err := s.queries(ctx).GetUser(ctx, id)
+	if err != nil {
+		return User{}, sqldb.MapError(err)
+	}
+	return userFromRow(row), nil
+}
+
+func (s *store) RecordLoginFailure(ctx context.Context, id {{.IDGo}}, at time.Time) (int, error) {
+	q := s.queries(ctx)
+	if err := q.IncrementFailedLogins(ctx, sqlc.IncrementFailedLoginsParams{UpdatedAt: at, ID: id}); err != nil {
+		return 0, err
+	}
+	n, err := q.GetFailedLogins(ctx, id)
+	return int(n), err
+}
+
+func (s *store) LockUser(ctx context.Context, id {{.IDGo}}, until time.Time) error {
+	return s.queries(ctx).LockUser(ctx, sqlc.LockUserParams{LockedUntil: &until, ID: id})
+}
+
+func (s *store) RecordLoginSuccess(ctx context.Context, id {{.IDGo}}) error {
+	return s.queries(ctx).RecordLoginSuccess(ctx, id)
+}
+
+func (s *store) UpdatePassword(ctx context.Context, id {{.IDGo}}, hash string, at time.Time) error {
+	return s.queries(ctx).UpdatePasswordHash(ctx, sqlc.UpdatePasswordHashParams{PasswordHash: hash, UpdatedAt: at, ID: id})
+}
+
+func (s *store) MarkEmailVerified(ctx context.Context, id {{.IDGo}}, at time.Time) error {
+	return s.queries(ctx).MarkEmailVerified(ctx, sqlc.MarkEmailVerifiedParams{EmailVerifiedAt: &at, UpdatedAt: at, ID: id})
+}
+
+func (s *store) GrantRole(ctx context.Context, id {{.IDGo}}, role string) error {
+	u, err := s.UserByID(ctx, id)
+	if err != nil || slices.Contains(u.Roles, role) {
+		return err
+	}
+	return s.queries(ctx).SetRoles(ctx, sqlc.SetRolesParams{Roles: encodeList(append(u.Roles, role)), ID: id})
+}
+
+func (s *store) CreateAuthToken(ctx context.Context, t authToken) error {
+	return s.queries(ctx).CreateAuthToken(ctx, sqlc.CreateAuthTokenParams{
+		TokenHash: t.Hash, UserID: t.UserID, Kind: t.Kind, ExpiresAt: t.ExpiresAt, CreatedAt: t.CreatedAt,
+	})
+}
+
+// ConsumeAuthToken marks an unused, unexpired token used (one atomic
+// UPDATE) and returns its user; db.ErrNotFound otherwise.
+func (s *store) ConsumeAuthToken(ctx context.Context, hash, kind string, at time.Time) ({{.IDGo}}, error) {
+	q := s.queries(ctx)
+	var zero {{.IDGo}}
+	n, err := q.UseAuthToken(ctx, sqlc.UseAuthTokenParams{UsedAt: &at, TokenHash: hash, Kind: kind, ExpiresAt: at})
+	if err != nil {
+		return zero, err
+	}
+	if n == 0 {
+		return zero, db.ErrNotFound
+	}
+	id, err := q.GetAuthTokenUser(ctx, hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return zero, db.ErrNotFound
+	}
+	return id, err
+}

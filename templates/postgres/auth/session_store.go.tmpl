@@ -1,0 +1,43 @@
+package auth
+
+import (
+	"context"
+	"time"
+
+	"{{.Module}}/db/sqlc"
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/db/pgxdb"
+)
+
+func (s *store) CreateSession(ctx context.Context, r sessionRow) error {
+	return s.queries(ctx).CreateSession(ctx, sqlc.CreateSessionParams{
+		IDHash: r.IDHash, UserID: r.UserID, CreatedAt: r.CreatedAt, LastSeenAt: r.LastSeenAt,
+		ExpiresAt: r.ExpiresAt, UserAgent: r.UserAgent, Ip: r.IP,
+	})
+}
+
+// FindSession implements semiiauth.SessionStore.
+func (s *store) FindSession(ctx context.Context, idHash string) (semiiauth.Session, error) {
+	row, err := s.queries(ctx).FindSession(ctx, idHash)
+	if err != nil {
+		return semiiauth.Session{}, pgxdb.MapError(err)
+	}
+	return semiiauth.Session{
+		UserID: IDString(row.UserID), Roles: row.Roles,
+		CreatedAt: row.CreatedAt, LastSeenAt: row.LastSeenAt, ExpiresAt: row.ExpiresAt,
+	}, nil
+}
+
+// TouchSession implements semiiauth.SessionStore.
+func (s *store) TouchSession(ctx context.Context, idHash string, at time.Time) error {
+	return s.queries(ctx).TouchSession(ctx, sqlc.TouchSessionParams{IDHash: idHash, LastSeenAt: at})
+}
+
+// DeleteSession implements semiiauth.SessionStore.
+func (s *store) DeleteSession(ctx context.Context, idHash string) error {
+	return s.queries(ctx).DeleteSession(ctx, idHash)
+}
+
+func (s *store) DeleteUserSessions(ctx context.Context, id {{.IDGo}}) error {
+	return s.queries(ctx).DeleteUserSessions(ctx, id)
+}

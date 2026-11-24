@@ -1,0 +1,238 @@
+// Package app wires the application together with explicit constructor
+// calls. Generators add resources between the semii:wiring markers.
+package app
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+{{- if .MySQL}}
+	_ "github.com/go-sql-driver/mysql" // registers the "mysql" driver
+{{- end}}
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+{{- if .SQLite}}
+	_ "modernc.org/sqlite" // registers the "sqlite" driver (pure Go)
+{{- end}}
+	appdb "{{.Module}}/db"
+	indexes "{{.Module}}/db/mongo"
+	"{{.Module}}/internal/config"
+	"{{.Semii}}/db/migrate"
+	"{{.Semii}}/db/mongodb"
+	"{{.Semii}}/db/pgxdb"
+	"{{.Semii}}/db/sqldb"
+	"{{.Semii}}/web"
+)
+
+// App is the assembled application.
+type App struct {
+	Config config.Config
+	Log    *slog.Logger
+{{- if .Postgres}}
+	DB     *pgxpool.Pool
+{{- else if .Mongo}}
+	Mongo  *mongo.Client
+	DB     *mongo.Database
+{{- else}}
+	DB     *sql.DB
+{{- end}}
+	Handler http.Handler
+	Router  *web.Router
+}
+
+// New opens the database and builds the application.
+func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
+{{- if .Postgres}}
+	pool, err := pgxdb.Open(ctx, cfg.DatabaseURL.Reveal(), pgxdb.Options{MaxConns: cfg.DB.MaxConns})
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	closeDB := pool.Close
+	if err := autoMigrate(ctx, cfg, pool, log); err != nil {
+		closeDB()
+		return nil, err
+	}
+	a, err := Build(cfg, log, pool)
+{{- else if .Mongo}}
+	client, mdb, err := mongodb.Open(ctx, cfg.DatabaseURL.Reveal(), cfg.DB.Name, mongodb.Options{MaxPoolSize: uint64(cfg.DB.MaxConns)})
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	closeDB := func() { _ = client.Disconnect(context.Background()) }
+	if err := autoMigrate(ctx, cfg, mdb, log); err != nil {
+		closeDB()
+		return nil, err
+	}
+	a, err := Build(cfg, log, client, mdb)
+{{- else}}
+	sqlDB, err := sqldb.Open(ctx, sqldb.{{if .MySQL}}MySQL{{else}}SQLite{{end}}, cfg.DatabaseURL.Reveal(), sqldb.Options{MaxOpenConns: int(cfg.DB.MaxConns)})
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	closeDB := func() { _ = sqlDB.Close() }
+	if err := autoMigrate(ctx, cfg, sqlDB, log); err != nil {
+		closeDB()
+		return nil, err
+	}
+	a, err := Build(cfg, log, sqlDB)
+{{- end}}
+	if err != nil {
+		closeDB()
+		return nil, err
+	}
+	return a, nil
+}
+
+// Build assembles the application around an open database and checks it
+// is ready to serve. Tests call it with a per-test database.
+{{- if .Postgres}}
+func Build(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) (*App, error) {
+	return newApp(cfg, log, pool, true)
+}
+{{- else if .Mongo}}
+func Build(cfg config.Config, log *slog.Logger, client *mongo.Client, mdb *mongo.Database) (*App, error) {
+	return newApp(cfg, log, client, mdb, true)
+}
+{{- else}}
+func Build(cfg config.Config, log *slog.Logger, sqlDB *sql.DB) (*App, error) {
+	return newApp(cfg, log, sqlDB, true)
+}
+{{- end}}
+
+// Routes lists every route without a database, for `semii routes`. The
+// error reports routes without a policy.
+func Routes() ([]web.RouteInfo, error) {
+	a, err := newApp(config.Config{Env: "development"}, slog.New(slog.DiscardHandler), nil{{if .Mongo}}, nil{{end}}, false)
+	if err != nil {
+		return nil, err
+	}
+	return a.Router.Routes(), a.Router.Verify()
+}
+
+// newApp wires modules with explicit constructor calls. Generators add
+// lines between the semii:wiring markers.
+{{- if .Postgres}}
+func newApp(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool, check bool) (*App, error) {
+{{- else if .Mongo}}
+func newApp(cfg config.Config, log *slog.Logger, client *mongo.Client, mdb *mongo.Database, check bool) (*App, error) {
+{{- else}}
+func newApp(cfg config.Config, log *slog.Logger, sqlDB *sql.DB, check bool) (*App, error) {
+{{- end}}
+	d := routeDeps{}
+	var mw []web.Middleware // innermost middleware, after the defaults
+	var problems []error    // configuration errors reported at boot
+	strictRoutes := true    // a route without a policy fails boot
+	// semii:wiring:start
+	// semii:wiring:end
+
+	r := web.NewRouter(web.Options{Logger: log, Env: cfg.Env})
+	registerRoutes(r, d)
+	if check {
+		problems = append(problems, cfg.HTTP.CORS.Validate())
+		if err := r.Verify(); err != nil { // deny-by-default check
+			if strictRoutes {
+				problems = append(problems, err)
+			} else {
+				log.Warn("routes without a policy", "error", err)
+			}
+		}
+		if err := errors.Join(problems...); err != nil {
+			return nil, err
+		}
+	}
+	h := web.Chain(r, append([]web.Middleware{
+		web.RequestID(), web.RealIP(cfg.HTTP.TrustedProxies),
+		web.Logger(log), web.Recover(log),
+		web.SecurityHeaders(cfg.Env), web.CORS(cfg.HTTP.CORS),
+		web.BodyLimit(cfg.HTTP.MaxBodyBytes), web.Timeout(cfg.HTTP.HandlerTimeout),
+		web.Gzip(),
+	}, mw...)...)
+{{- if .Postgres}}
+	return &App{Config: cfg, Log: log, DB: pool, Handler: h, Router: r}, nil
+{{- else if .Mongo}}
+	return &App{Config: cfg, Log: log, Mongo: client, DB: mdb, Handler: h, Router: r}, nil
+{{- else}}
+	return &App{Config: cfg, Log: log, DB: sqlDB, Handler: h, Router: r}, nil
+{{- end}}
+}
+
+// Close releases the database connection.
+func (a *App) Close() error {
+{{- if .Postgres}}
+	if a.DB != nil {
+		a.DB.Close()
+	}
+	return nil
+{{- else if .Mongo}}
+	if a.Mongo == nil {
+		return nil
+	}
+	return a.Mongo.Disconnect(context.Background())
+{{- else}}
+	if a.DB == nil {
+		return nil
+	}
+	return a.DB.Close()
+{{- end}}
+}
+
+// Ping reports whether the database is reachable (used by /readyz).
+func (a *App) Ping(ctx context.Context) error {
+{{- if .Postgres}}
+	return a.DB.Ping(ctx)
+{{- else if .Mongo}}
+	return a.Mongo.Ping(ctx, nil)
+{{- else}}
+	return a.DB.PingContext(ctx)
+{{- end}}
+}
+
+{{- if .Mongo}}
+
+// autoMigrate ensures the indexes in db/mongo when DB_AUTO_MIGRATE=true.
+func autoMigrate(ctx context.Context, cfg config.Config, mdb *mongo.Database, log *slog.Logger) error {
+	if !cfg.DB.AutoMigrate {
+		return nil
+	}
+	if cfg.Env == "production" && !cfg.DB.AutoMigrateProduction {
+		return errors.New("DB_AUTO_MIGRATE is refused in production; set DB_AUTO_MIGRATE_PRODUCTION=true to allow it")
+	}
+	if err := indexes.Ensure(ctx, mdb); err != nil {
+		return err
+	}
+	log.Info("indexes ensured")
+	return nil
+}
+{{- else}}
+
+// autoMigrate applies pending migrations when DB_AUTO_MIGRATE=true.
+{{- if .Postgres}}
+func autoMigrate(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) error {
+{{- else}}
+func autoMigrate(ctx context.Context, cfg config.Config, sqlDB *sql.DB, log *slog.Logger) error {
+{{- end}}
+	if !cfg.DB.AutoMigrate {
+		return nil
+	}
+	if cfg.Env == "production" && !cfg.DB.AutoMigrateProduction {
+		return errors.New("DB_AUTO_MIGRATE is refused in production; set DB_AUTO_MIGRATE_PRODUCTION=true to allow it")
+	}
+{{- if .Postgres}}
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	defer sqlDB.Close()
+	applied, err := migrate.Up(ctx, sqlDB, appdb.Migrations())
+{{- else}}
+	applied, err := migrate.Up(ctx, sqlDB, appdb.Migrations(), migrate.WithDialect(migrate.{{if .MySQL}}MySQL{{else}}SQLite{{end}}))
+{{- end}}
+	if err != nil {
+		return err
+	}
+	log.Info("migrations applied", "count", len(applied))
+	return nil
+}
+{{- end}}

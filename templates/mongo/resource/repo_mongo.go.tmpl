@@ -1,0 +1,211 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"{{.Semii}}/db"
+	"{{.Semii}}/db/mongodb"
+	"{{.Semii}}/web"
+)
+
+// MongoRepo implements Repository on the "{{.Table}}" collection.
+type MongoRepo struct {
+	db *mongo.Database
+}
+
+// NewMongoRepo returns a repository on d. d may be nil when the app is only
+// built to list routes.
+func NewMongoRepo(d *mongo.Database) *MongoRepo { return &MongoRepo{db: d} }
+
+func (r *MongoRepo) coll() *mongo.Collection { return r.db.Collection("{{.Table}}") }
+
+var _ Repository = (*MongoRepo)(nil)
+
+// Indexes are the collection's indexes; db/mongo registers them.
+func Indexes() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		// Keyset pagination order.
+		{Keys: bson.D{ {Key: "created_at", Value: -1}, {Key: "_id", Value: -1} }},
+{{- range .Fields}}
+{{- if .Unique}}
+		{Keys: bson.D{ {Key: "{{.Col}}", Value: 1} }, Options: options.Index().SetUnique(true){{if .Null}}.
+			SetPartialFilterExpression(bson.M{"{{.Col}}": bson.M{"$exists": true}}){{end}}},
+{{- else if .Index}}
+		{Keys: bson.D{ {Key: "{{.Col}}", Value: 1} }},
+{{- end}}
+{{- end}}
+	}
+}
+
+// document is the stored form of {{.Name}}.
+type document struct {
+	ID        bson.ObjectID `bson:"_id"`
+{{- range .Fields}}
+	{{.GoName}} {{.DocType}} `bson:"{{.BSONTag}}"`
+{{- end}}
+	CreatedAt time.Time  `bson:"created_at"`
+	UpdatedAt time.Time  `bson:"updated_at"`
+{{- if .SoftDelete}}
+	DeletedAt *time.Time `bson:"deleted_at,omitempty"`
+{{- end}}
+}
+
+func toDoc(o {{.Name}}) document {
+{{- if .DocConvertible}}
+	return document(o)
+}
+{{- else}}
+	return document{
+		ID: o.ID,
+{{- range .Fields}}
+		{{.GoName}}: {{.ToDoc (printf "o.%s" .GoName) .Null}},
+{{- end}}
+		CreatedAt: o.CreatedAt,
+		UpdatedAt: o.UpdatedAt,
+	}
+}
+{{- end}}
+
+func fromDoc(d document) {{.Name}} {
+	return {{.Name}}{
+		ID: d.ID,
+{{- range .Fields}}
+		{{.GoName}}: {{.FromDoc (printf "d.%s" .GoName)}},
+{{- end}}
+		CreatedAt: d.CreatedAt.UTC(),
+		UpdatedAt: d.UpdatedAt.UTC(),
+	}
+}
+
+// mnow is now() at BSON's millisecond precision.
+func mnow() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }
+
+// live selects documents that are not soft-deleted.
+func live(f bson.M) bson.M {
+{{- if .SoftDelete}}
+	f["deleted_at"] = bson.M{"$exists": false}
+{{- end}}
+	return f
+}
+
+// Create inserts a {{.Var}}.
+func (r *MongoRepo) Create(ctx context.Context, in CreateInput) ({{.Name}}, error) {
+	t := mnow()
+	o := {{.Name}}{
+		ID: bson.NewObjectID(),
+{{- range .Fields}}{{if not .HasDefault}}
+		{{.GoName}}: in.{{.GoName}},
+{{- end}}{{end}}
+		CreatedAt: t,
+		UpdatedAt: t,
+	}
+{{- range .Fields}}{{if .HasDefault}}
+	o.{{.GoName}} = {{.DefaultGo}}
+	if in.{{.GoName}} != nil {
+		o.{{.GoName}} = *in.{{.GoName}}
+	}
+{{- end}}{{end}}
+	d := toDoc(o)
+	if _, err := r.coll().InsertOne(ctx, d); err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo create: %w", mongodb.MapError(err))
+	}
+	return fromDoc(d), nil
+}
+
+// Get returns the {{.Var}} with the given id.
+func (r *MongoRepo) Get(ctx context.Context, id bson.ObjectID) ({{.Name}}, error) {
+	var d document
+	if err := r.coll().FindOne(ctx, live(bson.M{"_id": id})).Decode(&d); err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo get: %w", mongodb.MapError(err))
+	}
+	return fromDoc(d), nil
+}
+
+// List returns one page of {{.PluralVar}}, newest first, and the cursor of
+// the next page (nil on the last page).
+func (r *MongoRepo) List(ctx context.Context, f ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error) {
+	filter := live(bson.M{})
+{{- range .Filters}}
+	if f.{{.GoName}} != nil {
+		filter["{{.Col}}"] = {{.ToDoc (printf "(*f.%s)" .GoName) false}}
+	}
+{{- end}}
+	if p.Cursor != nil {
+		var at time.Time
+		var id bson.ObjectID
+		if err := p.Cursor.Scan(&at, &id); err != nil {
+			return nil, nil, err
+		}
+		filter["$or"] = bson.A{
+			bson.M{"created_at": bson.M{"$lt": at}},
+			bson.M{"created_at": at, "_id": bson.M{"$lt": id}},
+		}
+	}
+	opts := options.Find().
+		SetSort(bson.D{ {Key: "created_at", Value: -1}, {Key: "_id", Value: -1} }).
+		SetLimit(int64(p.Limit + 1))
+	cur, err := r.coll().Find(ctx, filter, opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("{{.Var}} repo list: %w", mongodb.MapError(err))
+	}
+	var docs []document
+	if err := cur.All(ctx, &docs); err != nil {
+		return nil, nil, fmt.Errorf("{{.Var}} repo list: %w", err)
+	}
+	items := make([]{{.Name}}, len(docs))
+	for i, d := range docs {
+		items[i] = fromDoc(d)
+	}
+	page := web.NewCursorPage(items, p.Limit, func(o {{.Name}}) []any { return []any{o.CreatedAt, o.ID} })
+	return page.Data, page.NextCursor, nil
+}
+
+// Update applies the non-nil fields of in by replacing the document.
+func (r *MongoRepo) Update(ctx context.Context, id bson.ObjectID, in UpdateInput) ({{.Name}}, error) {
+	o, err := r.Get(ctx, id)
+	if err != nil {
+		return {{.Name}}{}, err
+	}
+	in.apply(&o)
+	o.UpdatedAt = mnow()
+	d := toDoc(o)
+	res, err := r.coll().ReplaceOne(ctx, live(bson.M{"_id": id}), d)
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo update: %w", mongodb.MapError(err))
+	}
+	if res.MatchedCount == 0 {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo update: %w", db.ErrNotFound)
+	}
+	return fromDoc(d), nil
+}
+
+// Delete {{if .SoftDelete}}soft-deletes{{else}}deletes{{end}} the {{.Var}} with the given id.
+func (r *MongoRepo) Delete(ctx context.Context, id bson.ObjectID) error {
+{{- if .SoftDelete}}
+	res, err := r.coll().UpdateOne(ctx, live(bson.M{"_id": id}), bson.M{"$set": bson.M{"deleted_at": mnow()}})
+	if err != nil {
+		return fmt.Errorf("{{.Var}} repo delete: %w", mongodb.MapError(err))
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("{{.Var}} repo delete: %w", db.ErrNotFound)
+	}
+{{- else}}
+	res, err := r.coll().DeleteOne(ctx, bson.M{"_id": id})
+	if err != nil {
+		return fmt.Errorf("{{.Var}} repo delete: %w", mongodb.MapError(err))
+	}
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("{{.Var}} repo delete: %w", db.ErrNotFound)
+	}
+{{- end}}
+	return nil
+}

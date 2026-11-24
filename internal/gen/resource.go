@@ -18,8 +18,9 @@ type Resource struct {
 	Version    string
 	Module     string
 	Semii      string
+	DB         string // postgres | mysql | sqlite | mongo
 	Fields     []Field
-	ID         string // uuid | bigint
+	ID         string // uuid | bigint | objectid
 	SoftDelete bool
 	Public     bool
 	Timestamp  string // migration version
@@ -27,10 +28,121 @@ type Resource struct {
 
 // IDGo is the Go type of the primary key.
 func (r Resource) IDGo() string {
-	if r.UUID() {
-		return "uuid.UUID"
+	switch r.ID {
+	case "bigint":
+		return "int64"
+	case "objectid":
+		return "bson.ObjectID"
+	}
+	return "uuid.UUID"
+}
+
+// Database predicates for templates.
+func (r Resource) Postgres() bool { return r.DB == "postgres" }
+func (r Resource) MySQL() bool    { return r.DB == "mysql" }
+func (r Resource) SQLite() bool   { return r.DB == "sqlite" }
+func (r Resource) Mongo() bool    { return r.DB == "mongo" }
+
+// Flag is the SQL test "the optional parameter name is unset" for MySQL
+// and SQLite queries; sqlc types the parameter from the cast.
+func (r Resource) Flag(name string) string {
+	if r.MySQL() {
+		return "CAST(sqlc.arg('" + name + "') AS SIGNED) = 0"
+	}
+	return "CAST(sqlc.arg('" + name + "') AS BOOLEAN) = 0"
+}
+
+// FlagOn is the Go value setting a Flag parameter.
+func (r Resource) FlagOn() string {
+	if r.MySQL() {
+		return "1"
+	}
+	return "true"
+}
+
+// IDSQLType is the primary key column type for MySQL and SQLite.
+func (r Resource) IDSQLType() string {
+	switch {
+	case r.SeqID() && r.MySQL():
+		return "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	case r.SeqID():
+		return "INTEGER PRIMARY KEY AUTOINCREMENT"
+	case r.MySQL():
+		return "CHAR(36) PRIMARY KEY"
+	}
+	return "UUID PRIMARY KEY"
+}
+
+// TimeSQL is the timestamp column type for MySQL and SQLite.
+func (r Resource) TimeSQL() string {
+	if r.MySQL() {
+		return "DATETIME(6)"
+	}
+	return "DATETIME"
+}
+
+// LimitType is sqlc's Go type for LIMIT ? on MySQL and SQLite.
+func (r Resource) LimitType() string {
+	if r.MySQL() {
+		return "int32"
 	}
 	return "int64"
+}
+
+// SeqID reports database-assigned integer ids.
+func (r Resource) SeqID() bool { return r.ID == "bigint" }
+
+// ObjectID reports MongoDB ObjectID ids.
+func (r Resource) ObjectID() bool { return r.ID == "objectid" }
+
+// NewIDExpr generates an id in Go (not used for bigint).
+func (r Resource) NewIDExpr() string {
+	if r.ObjectID() {
+		return "bson.NewObjectID()"
+	}
+	return "uuid.Must(uuid.NewV7())"
+}
+
+// DocConvertible reports that the Mongo document has exactly the model's
+// fields and types, so toDoc can be a plain conversion.
+func (r Resource) DocConvertible() bool {
+	if r.SoftDelete {
+		return false
+	}
+	for _, f := range r.Fields {
+		if !f.docIdentity() {
+			return false
+		}
+	}
+	return true
+}
+
+// FactoryType is the database handle factories and repositories take.
+func (r Resource) FactoryType() string {
+	switch r.DB {
+	case "postgres":
+		return "*sqlc.Queries"
+	case "mongo":
+		return "*mongo.Database"
+	}
+	return "*sql.DB"
+}
+
+// RepoCtor builds the database repository from arg (a FactoryType).
+func (r Resource) RepoCtor(arg string) string {
+	if r.Mongo() {
+		return "NewMongoRepo(" + arg + ")"
+	}
+	return "NewSQLRepo(" + arg + ")"
+}
+
+// FactoryArg is the FactoryType expression handler tests pass, given the
+// app a.
+func (r Resource) FactoryArg() string {
+	if r.Postgres() {
+		return "sqlc.New(a.DB)"
+	}
+	return "a.DB"
 }
 
 // IDCast is the Postgres type of the primary key.
@@ -42,22 +154,17 @@ func (r Resource) IDCast() string {
 }
 
 // UUID reports UUID primary keys.
-func (r Resource) UUID() bool { return r.ID != "bigint" }
-
-// PathID is the web helper that parses the {id} path value.
-func (r Resource) PathID() string {
-	if r.UUID() {
-		return "PathUUID"
-	}
-	return "PathInt64"
-}
+func (r Resource) UUID() bool { return r.ID == "uuid" || r.ID == "" }
 
 // MissingID is a Go expression for an id that does not exist.
 func (r Resource) MissingID() string {
-	if r.UUID() {
-		return "uuid.NewString()"
+	switch r.ID {
+	case "bigint":
+		return `"999999999"`
+	case "objectid":
+		return "bson.NewObjectID().Hex()"
 	}
-	return `"999999999"`
+	return "uuid.NewString()"
 }
 
 func (r Resource) filter(keep func(Field) bool) []Field {
@@ -127,6 +234,12 @@ func (r Resource) InsertValues() string {
 		vals[i] = fmt.Sprintf("$%d", i+1)
 	}
 	return strings.Join(vals, ", ")
+}
+
+// InsertPlaceholders lists ? placeholders for the MySQL/SQLite insert.
+func (r Resource) InsertPlaceholders() string {
+	n := len(strings.Split(r.InsertColumns(), ", "))
+	return strings.TrimSuffix(strings.Repeat("?, ", n), ", ")
 }
 
 // SetClause is the UPDATE assignment for f: COALESCE for required
@@ -207,30 +320,36 @@ func (f Field) FakeMatch(row, want string) string {
 	return f.eq(row, want)
 }
 
-// Paths of the files a resource generates, relative to the project root.
-func (r Resource) files() map[string]string {
-	pkg := path.Join("internal", r.Pkg)
-	return map[string]string{
-		"model.go":        pkg + "/model.go",
-		"dto.go":          pkg + "/dto.go",
-		"repo.go":         pkg + "/repo.go",
-		"repo_sql.go":     pkg + "/repo_sql.go",
-		"service.go":      pkg + "/service.go",
-		"handler.go":      pkg + "/handler.go",
-		"routes.go":       pkg + "/routes.go",
-		"fake_repo.go":    pkg + "/fake_repo.go",
-		"service_test.go": pkg + "/service_test.go",
-		"handler_test.go": pkg + "/handler_test.go",
-		"factory.go":      "internal/factory/" + r.Pkg + ".go",
-		"queries.sql":     "db/queries/" + r.Table + ".sql",
-		"migration.sql":   "db/migrations/" + r.Timestamp + "_create_" + r.Table + ".sql",
+// dbDir is the template directory for the project's database.
+func dbDir(db string) string {
+	if db == "mysql" || db == "sqlite" {
+		return "sql"
 	}
+	return db
 }
 
-// Parts selectable with --only.
+// files maps template paths to output paths, relative to the project.
+func (r Resource) files() map[string]string {
+	pkg := path.Join("internal", r.Pkg)
+	out := map[string]string{"common/resource/factory.go.tmpl": "internal/factory/" + r.Pkg + ".go"}
+	for _, f := range []string{"model", "dto", "repo", "service", "handler", "routes", "fake_repo", "service_test", "handler_test"} {
+		out["common/resource/"+f+".go.tmpl"] = pkg + "/" + f + ".go"
+	}
+	dir := dbDir(r.DB) + "/resource/"
+	if r.Mongo() {
+		out[dir+"repo_mongo.go.tmpl"] = pkg + "/repo_mongo.go"
+		return out
+	}
+	out[dir+"repo_sql.go.tmpl"] = pkg + "/repo_sql.go"
+	out[dir+"queries.sql.tmpl"] = "db/queries/" + r.Table + ".sql"
+	out[dir+"migration.sql.tmpl"] = "db/migrations/" + r.Timestamp + "_create_" + r.Table + ".sql"
+	return out
+}
+
+// Parts selectable with --only, by output file name.
 var resourceParts = map[string][]string{
 	"model":     {"model.go", "dto.go"},
-	"repo":      {"repo.go", "repo_sql.go", "fake_repo.go", "queries.sql"},
+	"repo":      {"repo.go", "repo_sql.go", "repo_mongo.go", "fake_repo.go", "queries.sql"},
 	"service":   {"service.go"},
 	"handler":   {"handler.go", "routes.go"},
 	"migration": {"migration.sql"},
@@ -249,19 +368,16 @@ type ResourceOptions struct {
 	Now        time.Time
 }
 
-// PlanResource builds the plan for one resource on Postgres.
+// PlanResource builds the plan for one resource.
 func PlanResource(rd Renderer, o ResourceOptions) (*Plan, Resource, error) {
 	p := o.Project
-	if p.DB != "postgres" {
-		return nil, Resource{}, fmt.Errorf("db %q: resource templates for %s arrive in milestone M5; only postgres is available", p.DB, p.DB)
-	}
 	names, err := ResourceNames(o.Name)
 	if err != nil {
 		return nil, Resource{}, err
 	}
 	res := Resource{
 		Names: names, Version: o.Version, Module: p.Module, Semii: SemiiModule,
-		ID: p.ID, SoftDelete: o.SoftDelete, Public: o.NoAuth || !p.HasAuth(),
+		DB: p.DB, ID: p.ID, SoftDelete: o.SoftDelete, Public: o.NoAuth || !p.HasAuth(),
 	}
 	seen := map[string]bool{}
 	for _, spec := range o.Fields {
@@ -269,12 +385,15 @@ func PlanResource(rd Renderer, o ResourceOptions) (*Plan, Resource, error) {
 		if err != nil {
 			return nil, Resource{}, err
 		}
+		if err := f.SetDialect(p.DB); err != nil {
+			return nil, Resource{}, err
+		}
 		if seen[f.Col] {
 			return nil, Resource{}, fmt.Errorf("field %q is declared twice", f.Col)
 		}
 		seen[f.Col] = true
 		if f.Ref != nil {
-			if _, err := os.Stat(filepath.Join(p.Root, "internal", f.Ref.Pkg, "repo_sql.go")); err != nil {
+			if _, err := os.Stat(filepath.Join(p.Root, "internal", f.Ref.Pkg, "repo.go")); err != nil {
 				return nil, Resource{}, fmt.Errorf("field %q references %s, which does not exist yet; generate it first", spec, f.Ref.Name)
 			}
 		}
@@ -308,11 +427,11 @@ func PlanResource(rd Renderer, o ResourceOptions) (*Plan, Resource, error) {
 	plan := &Plan{Root: p.Root}
 	files := res.files()
 	for _, tmpl := range sortedKeys(files) {
-		if !selected[tmpl] {
+		target := files[tmpl]
+		if !selected[path.Base(strings.TrimSuffix(tmpl, ".tmpl"))] {
 			continue
 		}
-		target := files[tmpl]
-		out, err := rd.Render("postgres/resource/"+tmpl+".tmpl", filepath.Join(p.Root, target), res)
+		out, err := rd.Render(tmpl, filepath.Join(p.Root, target), res)
 		if err != nil {
 			return nil, Resource{}, err
 		}
@@ -335,9 +454,22 @@ func planWiring(plan *Plan, p Project, r Resource) error {
 	}, []string{pkgImport}}); err != nil {
 		return err
 	}
+	repo, imports := r.Pkg+".NewSQLRepo(sqlDB)", []string{pkgImport}
+	switch r.DB {
+	case "postgres":
+		repo = r.Pkg + ".NewSQLRepo(sqlc.New(pool))"
+		imports = append(imports, p.Module+"/db/sqlc")
+	case "mongo":
+		repo = r.Pkg + ".NewMongoRepo(mdb)"
+		if err := planEdit(plan, p.Root, fileEdit{"db/mongo/indexes.go", []markerLine{
+			{"indexes", fmt.Sprintf("%q: %s.Indexes(),", r.Table, r.Pkg)},
+		}, []string{pkgImport}}); err != nil {
+			return err
+		}
+	}
 	return planEdit(plan, p.Root, fileEdit{"internal/app/app.go", []markerLine{
-		{"wiring", fmt.Sprintf("d.%s = %s.NewHandler(%s.NewService(%s.NewSQLRepo(sqlc.New(pool))))", r.Plural, r.Pkg, r.Pkg, r.Pkg)},
-	}, []string{pkgImport, p.Module + "/db/sqlc"}})
+		{"wiring", fmt.Sprintf("d.%s = %s.NewHandler(%s.NewService(%s))", r.Plural, r.Pkg, r.Pkg, repo)},
+	}, imports})
 }
 
 // MigrationVersion returns a YYYYMMDDHHMMSS version not used by an

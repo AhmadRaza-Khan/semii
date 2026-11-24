@@ -1,0 +1,43 @@
+package auth
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+	"{{.Module}}/db/sqlc"
+	"{{.Semii}}/db/pgxdb"
+)
+
+func (s *store) CreateRefreshToken(ctx context.Context, r refreshRow) error {
+	return s.queries(ctx).CreateRefreshToken(ctx, sqlc.CreateRefreshTokenParams{
+		TokenHash: r.Hash, FamilyID: r.FamilyID, UserID: r.UserID, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+	})
+}
+
+// ConsumeRefreshToken marks an unused, unrevoked token used (atomically);
+// db.ErrNotFound otherwise.
+func (s *store) ConsumeRefreshToken(ctx context.Context, hash string, at time.Time) (refreshRow, error) {
+	row, err := s.queries(ctx).ConsumeRefreshToken(ctx, sqlc.ConsumeRefreshTokenParams{TokenHash: hash, Now: at})
+	if err != nil {
+		return refreshRow{}, pgxdb.MapError(err)
+	}
+	return refreshRow{Hash: hash, FamilyID: row.FamilyID, UserID: row.UserID, ExpiresAt: row.ExpiresAt}, nil
+}
+
+func (s *store) GetRefreshToken(ctx context.Context, hash string) (refreshRow, error) {
+	row, err := s.queries(ctx).GetRefreshToken(ctx, hash)
+	if err != nil {
+		return refreshRow{}, pgxdb.MapError(err)
+	}
+	return refreshRow{Hash: row.TokenHash, FamilyID: row.FamilyID, UserID: row.UserID, ExpiresAt: row.ExpiresAt,
+		CreatedAt: row.CreatedAt, UsedAt: row.UsedAt, RevokedAt: row.RevokedAt}, nil
+}
+
+func (s *store) RevokeRefreshFamily(ctx context.Context, family uuid.UUID, at time.Time) error {
+	return s.queries(ctx).RevokeRefreshFamily(ctx, sqlc.RevokeRefreshFamilyParams{FamilyID: family, Now: at})
+}
+
+func (s *store) RevokeUserRefreshTokens(ctx context.Context, id {{.IDGo}}, at time.Time) error {
+	return s.queries(ctx).RevokeUserRefreshTokens(ctx, sqlc.RevokeUserRefreshTokensParams{UserID: id, Now: at})
+}

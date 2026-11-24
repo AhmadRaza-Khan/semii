@@ -17,23 +17,25 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
-
-// EnvDatabaseURL names the variable pointing tests at a database server,
-// e.g. postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable.
-// Container-backed databases (testcontainers) arrive with M5; until then
-// tests needing a database are skipped when it is unset.
-const EnvDatabaseURL = "TEST_DATABASE_URL"
 
 // DBOption configures a test database.
 type DBOption func(*dbOptions)
 
 type dbOptions struct {
 	migrations fs.FS
+	mongoSetup func(ctx context.Context, d *mongo.Database) error
 }
 
-// WithMigrations applies the migrations in fsys (files at its root).
+// WithMigrations applies the SQL migrations in fsys (files at its root).
 func WithMigrations(fsys fs.FS) DBOption { return func(o *dbOptions) { o.migrations = fsys } }
+
+// WithMongoSetup runs fn on each new Mongo test database, typically to
+// ensure indexes.
+func WithMongoSetup(fn func(ctx context.Context, d *mongo.Database) error) DBOption {
+	return func(o *dbOptions) { o.mongoSetup = fn }
+}
 
 // Process-wide registry of template databases. Templates are expensive to
 // build, so each test process migrates one per migration set and clones it
@@ -41,22 +43,17 @@ func WithMigrations(fsys fs.FS) DBOption { return func(o *dbOptions) { o.migrati
 // testkit, and it is test-only.
 var (
 	tplMu     sync.Mutex
-	templates = map[string]string{} // migration hash -> template db name
+	templates = map[string]template{} // migration hash + server -> template
 	dbSeq     atomic.Int64
 )
 
 // Postgres returns a pool on a fresh database cloned from a migrated
 // template (CREATE DATABASE ... TEMPLATE), dropped when the test ends.
-// Tests are skipped in -short mode or when TEST_DATABASE_URL is unset.
+// Tests are skipped in -short mode or when no server is available (see
+// EnvDatabaseURL).
 func Postgres(t testing.TB, opts ...DBOption) *pgxpool.Pool {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("testkit: skipping database test in -short mode")
-	}
-	adminURL := os.Getenv(EnvDatabaseURL)
-	if adminURL == "" {
-		t.Skipf("testkit: %s not set; start Postgres (docker compose up -d db) and export it", EnvDatabaseURL)
-	}
+	adminURL := serverURL(t, "postgres")
 	var o dbOptions
 	for _, opt := range opts {
 		opt(&o)
@@ -101,19 +98,22 @@ func Postgres(t testing.TB, opts ...DBOption) *pgxpool.Pool {
 	return pool
 }
 
+type template struct{ adminURL, name string }
+
 func ensureTemplate(ctx context.Context, admin *pgx.Conn, adminURL string, migrations fs.FS) (string, error) {
-	key, err := hashFS(migrations)
+	hash, err := hashFS(migrations)
 	if err != nil {
 		return "", err
 	}
-	if name, ok := templates[key]; ok {
-		return name, nil
+	key := hash + "\x00" + adminURL
+	if t, ok := templates[key]; ok {
+		return t.name, nil
 	}
-	name := fmt.Sprintf("tpl_%d_%s", os.Getpid(), key[:12])
+	name := fmt.Sprintf("tpl_%d_%s", os.Getpid(), hash[:12])
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
 		return "", fmt.Errorf("create template: %w", err)
 	}
-	templates[key] = name
+	templates[key] = template{adminURL, name}
 	if migrations == nil {
 		return name, nil
 	}
@@ -168,18 +168,18 @@ func dropDatabase(adminURL, name string) {
 	_, _ = admin.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
 }
 
-// Main runs the package's tests and then drops the template databases this
-// process created. Call it from TestMain:
+// Main runs the package's tests, then drops the template databases and
+// stops the containers this process created. Call it from TestMain:
 //
 //	func TestMain(m *testing.M) { testkit.Main(m) }
 func Main(m *testing.M) {
 	code := m.Run()
 	tplMu.Lock()
-	if url := os.Getenv(EnvDatabaseURL); url != "" {
-		for _, name := range templates {
-			dropDatabase(url, name)
-		}
+	for _, t := range templates {
+		dropDatabase(t.adminURL, t.name)
 	}
+	clear(templates)
 	tplMu.Unlock()
+	stopServers()
 	os.Exit(code)
 }

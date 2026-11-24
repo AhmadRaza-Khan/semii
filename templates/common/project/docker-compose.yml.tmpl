@@ -1,0 +1,51 @@
+# Local development services. Start the database with: docker compose up -d db
+services:
+  db:
+{{- if .Postgres}}
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: {{.DBName}}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d {{.DBName}}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+{{- else if .MySQL}}
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: {{.DBName}}
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-proot"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - dbdata:/var/lib/mysql
+{{- else}}
+    # A single-node replica set: MongoDB transactions require one.
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]}).ok }"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - dbdata:/data/db
+{{- end}}
+
+volumes:
+  dbdata:

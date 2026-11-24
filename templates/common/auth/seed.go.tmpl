@@ -1,0 +1,49 @@
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"{{.Semii}}/auth/password"
+)
+
+// CreateUser creates an account directly (seeds and test factories). An
+// existing email is returned unchanged, with roles added.
+func CreateUser(ctx context.Context, conn {{.DBType}}, email, pw string, roles []string, verified bool) (User, error) {
+	hash, err := password.Hash(pw, password.DefaultParams)
+	if err != nil {
+		return User{}, err
+	}
+	st := newStore(conn)
+	t := now()
+	u, _, err := st.CreateUser(ctx, newUser{Email: normalizeEmail(email), PasswordHash: hash, CreatedAt: t})
+	if err != nil {
+		return User{}, err
+	}
+	for _, role := range roles {
+		if err := st.GrantRole(ctx, u.ID, role); err != nil {
+			return User{}, err
+		}
+	}
+	if verified {
+		if err := st.MarkEmailVerified(ctx, u.ID, t); err != nil {
+			return User{}, err
+		}
+	}
+	return st.UserByID(ctx, u.ID)
+}
+
+// SeedAdmin creates the account email (if missing) and grants it the
+// "admin" role. It is idempotent: an existing account keeps its password.
+func SeedAdmin(ctx context.Context, conn {{.DBType}}, email, pw string) error {
+	if err := password.Check(pw, true); err != nil {
+		return fmt.Errorf("seed admin: %w", err)
+	}
+	if _, err := CreateUser(ctx, conn, email, pw, []string{"admin"}, true); err != nil {
+		return fmt.Errorf("seed admin: %w", err)
+	}
+	return nil
+}

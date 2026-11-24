@@ -1,0 +1,170 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+	"{{.Module}}/db/sqlc"
+	"{{.Semii}}/db"
+	"{{.Semii}}/db/sqldb"
+	"{{.Semii}}/web"
+)
+
+// SQLRepo implements Repository on {{if .MySQL}}MySQL{{else}}SQLite{{end}} using the sqlc queries in
+// db/queries/{{.Table}}.sql.
+type SQLRepo struct {
+	db *sql.DB
+	q  *sqlc.Queries
+	tx bool // q is bound to a transaction
+}
+
+// NewSQLRepo returns a repository on db.
+func NewSQLRepo(db *sql.DB) *SQLRepo { return &SQLRepo{db: db, q: sqlc.New(db)} }
+
+// WithTx returns a copy of the repository that runs inside tx.
+func (r *SQLRepo) WithTx(tx *sql.Tx) *SQLRepo { return &SQLRepo{db: r.db, q: r.q.WithTx(tx), tx: true} }
+
+var _ Repository = (*SQLRepo)(nil)
+
+// inTx runs fn in a transaction, or in the current one.
+func (r *SQLRepo) inTx(ctx context.Context, fn func(q *sqlc.Queries) error) error {
+	if r.tx {
+		return fn(r.q)
+	}
+	return sqldb.WithTx(ctx, r.db, func(tx *sql.Tx) error { return fn(r.q.WithTx(tx)) }, nil)
+}
+
+func fromRow(row sqlc.{{.SqlcStruct}}) {{.Name}} {
+	return {{.Name}}{
+		ID: row.ID,
+{{- range .Fields}}
+		{{.GoName}}: {{.FromSqlc (printf "row.%s" .SqlcName)}},
+{{- end}}
+		CreatedAt: row.CreatedAt.UTC(),
+		UpdatedAt: row.UpdatedAt.UTC(),
+	}
+}
+
+// Create inserts a {{.Var}}.
+func (r *SQLRepo) Create(ctx context.Context, in CreateInput) ({{.Name}}, error) {
+{{- range .Fields}}{{if .HasDefault}}
+	def{{.GoName}} := {{.DefaultGo}}
+	if in.{{.GoName}} != nil {
+		def{{.GoName}} = *in.{{.GoName}}
+	}
+{{- end}}{{end}}
+	t := now()
+{{- if .SeqID}}
+	id, err := r.q.Create{{.Name}}(ctx, sqlc.Create{{.Name}}Params{
+{{- else}}
+	id := {{.NewIDExpr}}
+	err := r.q.Create{{.Name}}(ctx, sqlc.Create{{.Name}}Params{
+		ID: id,
+{{- end}}
+{{- range .Fields}}
+		{{.SqlcName}}: {{.CreateParam}},
+{{- end}}
+		CreatedAt: t,
+		UpdatedAt: t,
+	})
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo create: %w", sqldb.MapError(err))
+	}
+	return r.Get(ctx, id)
+}
+
+// Get returns the {{.Var}} with the given id.
+func (r *SQLRepo) Get(ctx context.Context, id {{.IDGo}}) ({{.Name}}, error) {
+	row, err := r.q.Get{{.Name}}(ctx, id)
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo get: %w", sqldb.MapError(err))
+	}
+	return fromRow(row), nil
+}
+
+// List returns one page of {{.PluralVar}}, newest first, and the cursor of
+// the next page (nil on the last page).
+func (r *SQLRepo) List(ctx context.Context, f ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error) {
+	arg := sqlc.List{{.Plural}}Params{ {{- if .MySQL}}Limit{{else}}Lim{{end}}: {{.LimitType}}(p.Limit + 1)}
+{{- range .Filters}}
+	if f.{{.GoName}} != nil {
+		arg.Has{{.SqlcName}} = {{$.FlagOn}}
+{{- if .Null}}
+		arg.{{.SqlcName}} = {{.ToSqlc (printf "f.%s" .GoName) true}}
+{{- else}}
+		arg.{{.SqlcName}} = {{.ToSqlc (printf "(*f.%s)" .GoName) false}}
+{{- end}}
+	}
+{{- end}}
+	if p.Cursor != nil {
+		var at time.Time
+		var id {{.IDGo}}
+		if err := p.Cursor.Scan(&at, &id); err != nil {
+			return nil, nil, err
+		}
+		arg.HasCursor, arg.AfterCreatedAt, arg.AfterID = {{.FlagOn}}, at, id
+	}
+	rows, err := r.q.List{{.Plural}}(ctx, arg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("{{.Var}} repo list: %w", sqldb.MapError(err))
+	}
+	items := make([]{{.Name}}, len(rows))
+	for i, row := range rows {
+		items[i] = fromRow(row)
+	}
+	page := web.NewCursorPage(items, p.Limit, func(o {{.Name}}) []any { return []any{o.CreatedAt, o.ID} })
+	return page.Data, page.NextCursor, nil
+}
+
+// Update applies the non-nil fields of in: the row is read, changed in Go
+// and written back in one transaction.
+func (r *SQLRepo) Update(ctx context.Context, id {{.IDGo}}, in UpdateInput) ({{.Name}}, error) {
+	var out {{.Name}}
+	err := r.inTx(ctx, func(q *sqlc.Queries) error {
+		row, err := q.Get{{.Name}}{{if .MySQL}}ForUpdate{{end}}(ctx, id)
+		if err != nil {
+			return err
+		}
+		o := fromRow(row)
+		in.apply(&o)
+		o.UpdatedAt = now()
+		if _, err := q.Update{{.Name}}(ctx, sqlc.Update{{.Name}}Params{
+{{- range .Fields}}
+			{{.SqlcName}}: {{.ToSqlc (printf "o.%s" .GoName) .Null}},
+{{- end}}
+			UpdatedAt: o.UpdatedAt,
+			ID:        id,
+		}); err != nil {
+			return err
+		}
+		row, err = q.Get{{.Name}}(ctx, id)
+		out = fromRow(row)
+		return err
+	})
+	if err != nil {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} repo update: %w", sqldb.MapError(err))
+	}
+	return out, nil
+}
+
+// Delete {{if .SoftDelete}}soft-deletes{{else}}deletes{{end}} the {{.Var}} with the given id.
+func (r *SQLRepo) Delete(ctx context.Context, id {{.IDGo}}) error {
+{{- if .SoftDelete}}
+	t := now()
+	n, err := r.q.Delete{{.Name}}(ctx, sqlc.Delete{{.Name}}Params{DeletedAt: &t, ID: id})
+{{- else}}
+	n, err := r.q.Delete{{.Name}}(ctx, id)
+{{- end}}
+	if err != nil {
+		return fmt.Errorf("{{.Var}} repo delete: %w", sqldb.MapError(err))
+	}
+	if n == 0 {
+		return fmt.Errorf("{{.Var}} repo delete: %w", db.ErrNotFound)
+	}
+	return nil
+}

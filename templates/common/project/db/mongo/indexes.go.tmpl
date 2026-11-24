@@ -1,0 +1,24 @@
+// Package indexes declares the MongoDB indexes, one entry per collection.
+// `semii migrate up` (and DB_AUTO_MIGRATE) ensure them; generators add
+// collections between the semii:indexes markers.
+package indexes
+
+import (
+	"context"
+
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"{{.Semii}}/db/mongodb"
+)
+
+// All returns the indexes of every collection.
+func All() map[string][]mongo.IndexModel {
+	return map[string][]mongo.IndexModel{
+		// semii:indexes:start
+		// semii:indexes:end
+	}
+}
+
+// Ensure creates the indexes that do not exist yet.
+func Ensure(ctx context.Context, d *mongo.Database) error {
+	return mongodb.EnsureIndexes(ctx, d, All())
+}

@@ -41,8 +41,58 @@ type Field struct {
 	HasDefault bool
 	Min, Max   string
 
-	idType string // project id kind, for ref fields: uuid | bigint
+	idType string // project id kind, for ref fields: uuid | bigint | objectid
+	db     string // postgres | mysql | sqlite | mongo
 	info   typeInfo
+}
+
+// dialectSQL maps field types to column types for MySQL and SQLite. The
+// type names double as sqlc override keys (see the sqlc.yaml templates):
+// SQLite uses UUID and DECIMAL_TEXT (TEXT affinity, exact decimals).
+var dialectSQL = map[string]map[string]string{
+	"mysql": {
+		"string": "VARCHAR(255)", "text": "TEXT", "int": "INT", "int64": "BIGINT", "bool": "BOOLEAN",
+		"float": "DOUBLE", "decimal": "DECIMAL(18,4)", "time": "DATETIME(6)", "date": "DATE",
+		"uuid": "CHAR(36)", "json": "JSON",
+	},
+	"sqlite": {
+		"string": "VARCHAR(255)", "text": "TEXT", "int": "INT", "int64": "BIGINT", "bool": "BOOLEAN",
+		"float": "DOUBLE", "decimal": "DECIMAL_TEXT", "time": "DATETIME", "date": "DATE",
+		"uuid": "UUID", "json": "JSON",
+	},
+}
+
+// SetDialect adapts a parsed field to the project's database. Postgres is
+// the default ParseField already produces.
+func (f *Field) SetDialect(db string) error {
+	f.db = db
+	switch db {
+	case "postgres", "":
+		return nil
+	case "mongo":
+		if f.Ref != nil {
+			f.info = typeInfo{goType: "bson.ObjectID"}
+		}
+		return nil
+	}
+	types, ok := dialectSQL[db]
+	if !ok {
+		return fmt.Errorf("unsupported database %q", db)
+	}
+	switch {
+	case f.Ref != nil && f.idType == "bigint":
+		f.info.sql = "BIGINT"
+	case f.Ref != nil:
+		f.info.sql = types["uuid"]
+	case f.Type == "string" && f.Max != "":
+		f.info.sql = "VARCHAR(" + f.Max + ")"
+	default:
+		f.info.sql = types[f.Type]
+	}
+	if db == "mysql" && f.Type == "text" && (f.Index || f.Unique) {
+		return fmt.Errorf("field %q: MySQL cannot index text columns; use string (VARCHAR) instead", f.Col)
+	}
+	return nil
 }
 
 // ParseField parses "total:decimal:min=0", "customer:ref:Customer",
@@ -287,15 +337,17 @@ func (f Field) SQLType() string { return f.info.sql }
 func (f Field) Cast() string { return f.info.cast }
 
 // ColumnDef is the full column definition for CREATE TABLE.
+// MySQL ignores inline REFERENCES, so its foreign keys are table
+// constraints (see ForeignKeys); MySQL also rejects defaults on TEXT.
 func (f Field) ColumnDef() string {
 	def := f.Col + " " + f.info.sql
 	if !f.Null {
 		def += " NOT NULL"
 	}
-	if f.HasDefault {
+	if f.HasDefault && !(f.db == "mysql" && f.Type == "text") {
 		def += " DEFAULT " + f.defaultSQL()
 	}
-	if f.Ref != nil {
+	if f.Ref != nil && f.db != "mysql" {
 		def += " REFERENCES " + f.Ref.Table + " (id) ON DELETE RESTRICT"
 	}
 	return def
@@ -305,6 +357,17 @@ func (f Field) defaultSQL() string {
 	switch f.Type {
 	case "string", "text":
 		return "'" + strings.ReplaceAll(f.Default, "'", "''") + "'"
+	case "decimal":
+		if f.db == "sqlite" {
+			return "'" + f.Default + "'" // TEXT affinity keeps it exact
+		}
+	case "bool":
+		if f.db == "sqlite" {
+			if f.Default == "true" {
+				return "1"
+			}
+			return "0"
+		}
 	}
 	return f.Default
 }
@@ -349,6 +412,11 @@ func (f Field) defaultGo() (string, error) {
 // ToSqlc converts a model/input expression of this field's type (as a value
 // of GoType, CreateType when ptr) into the sqlc parameter type.
 func (f Field) ToSqlc(expr string, ptr bool) string {
+	if f.IsJSON() && (f.db == "mysql" || f.db == "sqlite") {
+		// sqldb.JSON is sent as text (MySQL JSON rejects binary strings)
+		// and scans NULL, which json.RawMessage cannot.
+		return "sqldb.JSON(" + expr + ")"
+	}
 	if !f.IsDate() {
 		return expr
 	}
@@ -360,6 +428,9 @@ func (f Field) ToSqlc(expr string, ptr bool) string {
 
 // FromSqlc converts a sqlc row field into the model type.
 func (f Field) FromSqlc(expr string) string {
+	if f.IsJSON() && (f.db == "mysql" || f.db == "sqlite") {
+		return "json.RawMessage(" + expr + ")"
+	}
 	if !f.IsDate() {
 		return expr
 	}
@@ -367,6 +438,89 @@ func (f Field) FromSqlc(expr string) string {
 		return "web.DateFromPtr(" + expr + ")"
 	}
 	return "web.Date{Time: " + expr + "}"
+}
+
+// --- MongoDB documents ---
+
+// DocType is the field's type in the MongoDB document struct.
+func (f Field) DocType() string {
+	base := f.info.goType
+	switch f.Type {
+	case "decimal":
+		base = "bson.Decimal128"
+	case "uuid":
+		base = "string"
+	case "date":
+		base = "time.Time"
+	case "json":
+		return "string"
+	}
+	if f.Null {
+		return "*" + base
+	}
+	return base
+}
+
+// BSONTag is the document field's bson tag.
+func (f Field) BSONTag() string {
+	if f.Null || f.IsJSON() {
+		return f.Col + ",omitempty"
+	}
+	return f.Col
+}
+
+// ToDoc converts a model value (pointer when ptr) to DocType.
+func (f Field) ToDoc(expr string, ptr bool) string {
+	conv := map[string][2]string{
+		"decimal": {"mongodb.Decimal128", "mongodb.MapPtr(%s, mongodb.Decimal128)"},
+		"uuid":    {"%s.String()", "mongodb.MapPtr(%s, uuid.UUID.String)"},
+		"date":    {"%s.Time", "%s.TimePtr()"},
+		"json":    {"mongodb.JSONString", "mongodb.JSONString"},
+	}
+	c, ok := conv[f.Type]
+	if !ok || f.IsRef() {
+		return expr
+	}
+	tmpl := c[0]
+	if ptr {
+		tmpl = c[1]
+	}
+	if !strings.Contains(tmpl, "%s") {
+		return tmpl + "(" + expr + ")"
+	}
+	return fmt.Sprintf(tmpl, expr)
+}
+
+// docIdentity reports that the document stores the model value as is.
+func (f Field) docIdentity() bool {
+	return f.ToDoc("x", f.Null) == "x"
+}
+
+// FromDoc converts a document field to the model type.
+func (f Field) FromDoc(expr string) string {
+	if f.IsRef() {
+		return expr
+	}
+	switch f.Type {
+	case "decimal":
+		if f.Null {
+			return "mongodb.MapPtr(" + expr + ", mongodb.Decimal)"
+		}
+		return "mongodb.Decimal(" + expr + ")"
+	case "uuid":
+		if f.Null {
+			return "mongodb.MapPtr(" + expr + ", uuid.MustParse)"
+		}
+		return "uuid.MustParse(" + expr + ")"
+	case "date":
+		if f.Null {
+			return "web.DateFromPtr(" + expr + ")"
+		}
+		return "web.Date{Time: " + expr + "}"
+	case "json":
+		return "mongodb.RawJSON(" + expr + ")"
+	}
+	return expr
 }
 
 // --- sample values for factories and tests ---
@@ -398,8 +552,11 @@ func (f Field) Sample(seq string) string {
 	case "json":
 		return "json.RawMessage(`{\"key\":\"value\"}`)"
 	}
-	if f.idType == "bigint" {
+	switch f.idType {
+	case "bigint":
 		return "int64(1)"
+	case "objectid":
+		return "bson.NewObjectID()"
 	}
 	return "uuid.New()"
 }

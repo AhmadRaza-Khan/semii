@@ -1,0 +1,146 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/db"
+	"{{.Semii}}/web"
+)
+
+// apiKeyStrategy authenticates "X-API-Key: sk_..." (or a bearer sk_ key)
+// and lets signed-in users manage their keys.
+type apiKeyStrategy struct {
+	svc  *Service
+	keys *semiiauth.APIKeys
+}
+
+func newAPIKeyStrategy(svc *Service) *apiKeyStrategy {
+	return &apiKeyStrategy{svc: svc, keys: semiiauth.NewAPIKeys(svc.store)}
+}
+
+func (s *apiKeyStrategy) name() string                           { return "apikey" }
+func (s *apiKeyStrategy) authenticator() semiiauth.Authenticator { return s.keys }
+
+func (s *apiKeyStrategy) login(http.ResponseWriter, *http.Request, User) error { return errNoLogin }
+
+func (s *apiKeyStrategy) logout(http.ResponseWriter, *http.Request, *semiiauth.Principal, logoutInput) error {
+	return nil
+}
+
+// revokeAll keeps API keys across password resets: they belong to
+// integrations, not to a browser session. Revoke them explicitly.
+func (s *apiKeyStrategy) revokeAll(context.Context, {{.IDGo}}) error { return nil }
+
+// Keys are managed by users only; a key cannot mint more keys.
+func (s *apiKeyStrategy) routes(g *web.Router) {
+	user := semiiauth.Kind(semiiauth.KindUser)
+	g.HandleFunc("POST /api-keys", s.create).Require(user)
+	g.HandleFunc("GET /api-keys", s.list).Require(user)
+	g.HandleFunc("DELETE /api-keys/{id}", s.revoke).Require(user)
+}
+
+// APIKey is a key as listed by the API; the secret is never returned again.
+type APIKey struct {
+	ID         {{.IDGo}} `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	Scopes     []string   `json:"scopes"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type createKeyInput struct {
+	Name      string     `json:"name" validate:"required,notblank,max=100"`
+	Scopes    []string   `json:"scopes" validate:"max=20,dive,required,max=64"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
+// createdKey is returned once, with the full key.
+type createdKey struct {
+	APIKey
+	Key string `json:"key"`
+}
+
+func (s *apiKeyStrategy) active() error {
+	if !s.svc.enabled("apikey") {
+		return errStrategyOff
+	}
+	return nil
+}
+
+func (s *apiKeyStrategy) create(w http.ResponseWriter, r *http.Request) error {
+	if err := s.active(); err != nil {
+		return err
+	}
+	owner, err := userID(r)
+	if err != nil {
+		return err
+	}
+	in, err := web.Decode[createKeyInput](r)
+	if err != nil {
+		return err
+	}
+	if in.ExpiresAt != nil && !in.ExpiresAt.After(time.Now()) {
+		return web.Unprocessable("invalid expiry", web.FieldError{Field: "expires_at", Code: "future", Message: "must be in the future"})
+	}
+	if in.Scopes == nil {
+		in.Scopes = []string{}
+	}
+	key, prefix, secretHash, err := semiiauth.NewAPIKey(s.svc.cfg.Env)
+	if err != nil {
+		return err
+	}
+	k, err := s.svc.store.CreateAPIKey(r.Context(), apiKeyRow{
+		UserID: owner, Name: in.Name, Prefix: prefix, SecretHash: secretHash,
+		Scopes: in.Scopes, ExpiresAt: in.ExpiresAt, CreatedAt: now(),
+	})
+	if err != nil {
+		return fmt.Errorf("auth create api key: %w", err)
+	}
+	return web.Created(w, "/auth/api-keys/"+keyIDString(k.ID), createdKey{APIKey: k, Key: key})
+}
+
+func (s *apiKeyStrategy) list(w http.ResponseWriter, r *http.Request) error {
+	if err := s.active(); err != nil {
+		return err
+	}
+	owner, err := userID(r)
+	if err != nil {
+		return err
+	}
+	keys, err := s.svc.store.ListAPIKeys(r.Context(), owner)
+	if err != nil {
+		return err
+	}
+	return web.JSON(w, http.StatusOK, map[string]any{"data": keys})
+}
+
+// revoke handles DELETE /auth/api-keys/{id}; other users' keys are 404.
+func (s *apiKeyStrategy) revoke(w http.ResponseWriter, r *http.Request) error {
+	if err := s.active(); err != nil {
+		return err
+	}
+	owner, err := userID(r)
+	if err != nil {
+		return err
+	}
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		return fmt.Errorf("auth revoke api key: %w", db.ErrNotFound)
+	}
+	n, err := s.svc.store.RevokeAPIKey(r.Context(), id, owner, now())
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("auth revoke api key: %w", db.ErrNotFound)
+	}
+	return web.NoContent(w)
+}
+
+func keyIDString(id {{.IDGo}}) string { return IDString(id) }

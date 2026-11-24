@@ -1,0 +1,53 @@
+package {{.Pkg}}
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"{{.Semii}}/web"
+)
+
+// Service holds the business logic for {{.PluralVar}}. It depends only on
+// Repository, so it can be tested with FakeRepo.
+type Service struct {
+	repo Repository
+}
+
+// NewService returns a Service backed by repo.
+func NewService(repo Repository) *Service { return &Service{repo: repo} }
+
+// Create validates business rules and stores a new {{.Var}}.
+func (s *Service) Create(ctx context.Context, in CreateInput) ({{.Name}}, error) {
+	if err := s.validateCreate(ctx, in); err != nil {
+		return {{.Name}}{}, err
+	}
+	return s.repo.Create(ctx, in)
+}
+
+// validateCreate is the place for business rules that struct tags cannot
+// express. Return web.Unprocessable(detail, fields...) or a domain error
+// mapped with Router.MapError.
+func (s *Service) validateCreate(_ context.Context, _ CreateInput) error {
+	return nil
+}
+
+// Get returns a {{.Var}} by id.
+func (s *Service) Get(ctx context.Context, id {{.IDGo}}) ({{.Name}}, error) {
+	return s.repo.Get(ctx, id)
+}
+
+// List returns a page of {{.PluralVar}} and the next cursor.
+func (s *Service) List(ctx context.Context, f ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error) {
+	return s.repo.List(ctx, f, p)
+}
+
+// Update applies a partial update.
+func (s *Service) Update(ctx context.Context, id {{.IDGo}}, in UpdateInput) ({{.Name}}, error) {
+	return s.repo.Update(ctx, id, in)
+}
+
+// Delete removes a {{.Var}}.
+func (s *Service) Delete(ctx context.Context, id {{.IDGo}}) error {
+	return s.repo.Delete(ctx, id)
+}

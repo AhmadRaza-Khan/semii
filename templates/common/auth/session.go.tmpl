@@ -1,0 +1,71 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/web"
+)
+
+// sessionStrategy signs users in with a server-side session cookie.
+type sessionStrategy struct {
+	svc      *Service
+	sessions *semiiauth.Sessions
+}
+
+func newSessionStrategy(svc *Service) *sessionStrategy {
+	return &sessionStrategy{svc: svc, sessions: semiiauth.NewSessions(svc.store, svc.cfg.Auth, svc.cfg.Env, svc.cfg.HTTP.CORS.AllowedOrigins...)}
+}
+
+func (s *sessionStrategy) name() string                           { return "session" }
+func (s *sessionStrategy) authenticator() semiiauth.Authenticator { return s.sessions }
+func (s *sessionStrategy) routes(*web.Router)                     {}
+
+// login replaces any session the browser already had (no fixation) with a
+// new one and sets its cookie.
+func (s *sessionStrategy) login(w http.ResponseWriter, r *http.Request, u User) error {
+	if old := semiiauth.CookieIDHash(r); old != "" {
+		if err := s.svc.store.DeleteSession(r.Context(), old); err != nil {
+			return err
+		}
+	}
+	tok, cookie, err := s.sessions.New()
+	if err != nil {
+		return err
+	}
+	t := now()
+	err = s.svc.store.CreateSession(r.Context(), sessionRow{
+		IDHash: tok.Hash, UserID: u.ID, CreatedAt: t, LastSeenAt: t, ExpiresAt: s.sessions.ExpiresAt(),
+		UserAgent: truncate(r.UserAgent(), 512), IP: web.ClientIP(r).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("auth session: %w", err)
+	}
+	http.SetCookie(w, cookie)
+	return web.JSON(w, http.StatusOK, map[string]any{"user": u})
+}
+
+func (s *sessionStrategy) logout(w http.ResponseWriter, r *http.Request, p *semiiauth.Principal, _ logoutInput) error {
+	idHash, _ := p.Claims[semiiauth.IDHashClaim].(string)
+	if idHash == "" {
+		return nil
+	}
+	if err := s.svc.store.DeleteSession(r.Context(), idHash); err != nil {
+		return err
+	}
+	s.sessions.ClearCookie(w)
+	return nil
+}
+
+func (s *sessionStrategy) revokeAll(ctx context.Context, userID {{.IDGo}}) error {
+	return s.svc.store.DeleteUserSessions(ctx, userID)
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}

@@ -1,0 +1,195 @@
+package {{.Pkg}}
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"{{.Semii}}/db"
+	"{{.Semii}}/web"
+)
+
+// FakeRepo is an in-memory Repository for unit tests. Like the SQL
+// repository it returns db.ErrNotFound and db.ErrConflict (unique
+// fields); foreign keys are not checked.
+type FakeRepo struct {
+	mu   sync.Mutex
+	rows map[{{.IDGo}}]{{.Name}}
+	fail map[string]error
+{{- if .SeqID}}
+	seq  int64
+{{- end}}
+}
+
+// NewFakeRepo returns an empty FakeRepo.
+func NewFakeRepo() *FakeRepo {
+	return &FakeRepo{rows: map[{{.IDGo}}]{{.Name}}{}, fail: map[string]error{}}
+}
+
+var _ Repository = (*FakeRepo)(nil)
+
+// FailNext makes the next call to method ("Create", "Get", "List",
+// "Update" or "Delete") return err.
+func (f *FakeRepo) FailNext(method string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail[method] = err
+}
+
+func (f *FakeRepo) takeFail(method string) error {
+	err := f.fail[method]
+	delete(f.fail, method)
+	return err
+}
+
+// conflict reports whether another row shares a unique value with o.
+func (f *FakeRepo) conflict(o {{.Name}}) bool {
+{{- if .Uniques}}
+	for id, other := range f.rows {
+		if id == o.ID {
+			continue
+		}
+{{- range .Uniques}}
+		if {{.FakeSame (printf "other.%s" .GoName) (printf "o.%s" .GoName)}} {
+			return true
+		}
+{{- end}}
+	}
+{{- end}}
+	return false
+}
+
+// Create stores a {{.Var}}.
+func (f *FakeRepo) Create(_ context.Context, in CreateInput) ({{.Name}}, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.takeFail("Create"); err != nil {
+		return {{.Name}}{}, err
+	}
+	t := now()
+	o := {{.Name}}{
+{{- if not .SeqID}}
+		ID: {{.NewIDExpr}},
+{{- end}}
+{{- range .Fields}}{{if not .HasDefault}}
+		{{.GoName}}: in.{{.GoName}},
+{{- end}}{{end}}
+		CreatedAt: t,
+		UpdatedAt: t,
+	}
+{{- if .SeqID}}
+	f.seq++
+	o.ID = f.seq
+{{- end}}
+{{- range .Fields}}{{if .HasDefault}}
+	o.{{.GoName}} = {{.DefaultGo}}
+	if in.{{.GoName}} != nil {
+		o.{{.GoName}} = *in.{{.GoName}}
+	}
+{{- end}}{{end}}
+	if f.conflict(o) {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} fake create: %w", db.ErrConflict)
+	}
+	f.rows[o.ID] = o
+	return o, nil
+}
+
+// Get returns a {{.Var}} by id.
+func (f *FakeRepo) Get(_ context.Context, id {{.IDGo}}) ({{.Name}}, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.takeFail("Get"); err != nil {
+		return {{.Name}}{}, err
+	}
+	o, ok := f.rows[id]
+	if !ok {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} fake get: %w", db.ErrNotFound)
+	}
+	return o, nil
+}
+
+// before reports whether a sorts before b: newest first, then by id
+// descending, matching the SQL keyset order.
+func before(a, b {{.Name}}) bool {
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.After(b.CreatedAt)
+	}
+{{- if .SeqID}}
+	return a.ID > b.ID
+{{- else}}
+	return bytes.Compare(a.ID[:], b.ID[:]) > 0
+{{- end}}
+}
+
+// List returns a page of {{.PluralVar}} in keyset order.
+func (f *FakeRepo) List(_ context.Context, filter ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.takeFail("List"); err != nil {
+		return nil, nil, err
+	}
+	var after *{{.Name}}
+	if p.Cursor != nil {
+		after = &{{.Name}}{}
+		if err := p.Cursor.Scan(&after.CreatedAt, &after.ID); err != nil {
+			return nil, nil, err
+		}
+	}
+	var items []{{.Name}}
+	for _, o := range f.rows {
+{{- range .Filters}}
+		if filter.{{.GoName}} != nil && !{{.FakeMatch (printf "o.%s" .GoName) (printf "(*filter.%s)" .GoName)}} {
+			continue
+		}
+{{- end}}
+		if after != nil && !before(*after, o) {
+			continue
+		}
+		items = append(items, o)
+	}
+	sort.Slice(items, func(i, j int) bool { return before(items[i], items[j]) })
+	if len(items) > p.Limit+1 {
+		items = items[:p.Limit+1]
+	}
+	page := web.NewCursorPage(items, p.Limit, func(o {{.Name}}) []any { return []any{o.CreatedAt, o.ID} })
+	return page.Data, page.NextCursor, nil
+}
+
+// Update applies the non-nil fields of in.
+func (f *FakeRepo) Update(_ context.Context, id {{.IDGo}}, in UpdateInput) ({{.Name}}, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.takeFail("Update"); err != nil {
+		return {{.Name}}{}, err
+	}
+	o, ok := f.rows[id]
+	if !ok {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} fake update: %w", db.ErrNotFound)
+	}
+	in.apply(&o)
+	o.UpdatedAt = now()
+	if f.conflict(o) {
+		return {{.Name}}{}, fmt.Errorf("{{.Var}} fake update: %w", db.ErrConflict)
+	}
+	f.rows[id] = o
+	return o, nil
+}
+
+// Delete removes a {{.Var}}.
+func (f *FakeRepo) Delete(_ context.Context, id {{.IDGo}}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.takeFail("Delete"); err != nil {
+		return err
+	}
+	if _, ok := f.rows[id]; !ok {
+		return fmt.Errorf("{{.Var}} fake delete: %w", db.ErrNotFound)
+	}
+	delete(f.rows, id)
+	return nil
+}

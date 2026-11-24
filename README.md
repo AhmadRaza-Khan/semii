@@ -12,7 +12,7 @@ through code generation, never runtime magic. The spec lives in
 | M2 | config, server, logx | done |
 | M3 | generator engine + Postgres (`semii new`, `generate resource`, …) | done |
 | M4 | auth | done |
-| M5 | testkit + MySQL/SQLite/Mongo | — |
+| M5 | testkit + MySQL/SQLite/Mongo | done |
 | M6 | ops, docs, examples | — |
 
 ## Quick start (from a local checkout)
@@ -38,8 +38,9 @@ semii dev
 `migrate up|down|status|redo|create`, `db seed`, `doctor`, `version`, with
 the global `--dry-run --force --verbose --no-color` and exit codes 0/1/2/3.
 `generate auth [--strategy session,jwt,apikey]` adds account flows and can
-be re-run to add strategies. `--db` values other than `postgres` report
-milestone M5.
+be re-run to add strategies. `--db postgres|mysql|sqlite|mongo` works for
+every command (Mongo has no SQL migrations: `migrate up` ensures the
+indexes declared in `db/mongo`).
 
 ## Packages so far
 
@@ -63,12 +64,19 @@ milestone M5.
   `ErrForeignKey`, which the router maps to 404/409/409.
 - `db/pgxdb` — `Open` (pool defaults, ping, UTC timestamps), `WithTx`,
   `MapError`.
+- `db/sqldb` — MySQL and SQLite over database/sql: `Open` (MySQL URLs,
+  parseTime, UTC; SQLite foreign keys, WAL, busy timeout), `WithTx`,
+  `MapError`, and `JSON` (a column type sent as text).
+- `db/mongodb` — `Open`, `WithTx` (replica set, with a clear error on a
+  standalone server), `MapError`, `EnsureIndexes` and Decimal128/JSON helpers.
 - `db/migrate` — goose as a library: `Up`, `Down`, `To`, `List`, `Pending`,
-  with a Postgres advisory lock.
-- `testkit` — in-process HTTP client with `Expect*` assertions and a cookie
-  jar; `Postgres(t)` clones a migrated template database per test.
-  (Pulled forward from M5 because generated tests need it; MySQL, SQLite,
-  Mongo and testcontainers remain M5.)
+  for Postgres (advisory lock), MySQL and SQLite.
+- `testkit` — in-process HTTP client with `Expect*` assertions, a cookie
+  jar and `As(principal)`; `Postgres(t)` (template clones), `MySQL(t)`,
+  `SQLite(t)` (a temporary file) and `Mongo(t)` (replica set) per test.
+  Servers come from `TEST_<ENGINE>_URL`, a matching `TEST_DATABASE_URL`, or
+  one container per test process (testcontainers); without Docker the tests
+  skip.
 - `auth` — `Principal`, `Middleware`, named policies (`Authenticated`,
   `Role`, `Scope`, `Kind`, `Any`, `All`), JWT (HS256/EdDSA, pinned
   algorithm, iss/aud, 30s leeway), server-side sessions with CSRF checks,
@@ -171,6 +179,34 @@ milestone M5.
 - **Session rotation on privilege change** has no trigger yet: v1 exposes
   no endpoint that changes roles.
 
+### M5
+
+- **One template tree, per-database parts:** `templates/common` holds what
+  every database shares (models, DTOs, services, handlers, the in-memory
+  fake, factories, tests, project files with small conditionals, all auth
+  flows); `postgres/`, `sql/` (MySQL and SQLite) and `mongo/` hold
+  repositories, queries, migrations and auth stores.
+- **Same Go types everywhere:** sqlc overrides give MySQL and SQLite the
+  Postgres types (uuid.UUID, decimal.Decimal, pointers for nullable
+  columns). SQLite columns use the type names `UUID` and `DECIMAL_TEXT`
+  (TEXT affinity keeps decimals exact). MySQL stores UUIDs as CHAR(36).
+- **MySQL/SQLite PATCH is read-modify-write** in a transaction (`SELECT …
+  FOR UPDATE` on MySQL), sharing `UpdateInput.apply` with the fake; list
+  filters use typed `has_*` flags because sqlc cannot type optional
+  parameters on those engines.
+- **Mongo:** ObjectID ids (JSON hex), decimals as Decimal128, UUIDs and JSON
+  fields as strings, millisecond timestamps, PATCH as read-replace.
+  Foreign keys are not enforced, and unique indexes on soft-deleted
+  collections still count deleted documents (Mongo partial indexes cannot
+  express "not deleted").
+- **Auth goes through a per-database `store`** whose strategy methods live
+  in `<strategy>_store.go`; transactions travel in the context, so the
+  password reset still revokes sessions and refresh tokens atomically on
+  every database.
+- **Generated go.mod pins three OpenTelemetry modules** for Go 1.24:
+  testcontainers' Docker dependency would otherwise pull versions needing
+  Go 1.26 during `go mod tidy`. Remove the pins once on Go 1.26+.
+
 - **Dockerfile, CI workflow and deploy files** are M6; `semii new` writes
   `docker-compose.yml` (database only) now and accepts `--no-ci`.
 
@@ -180,8 +216,9 @@ milestone M5.
 go test -race -cover ./...
 go test -run x -bench . ./web        # router overhead vs plain ServeMux
 
-# Integration tests need a Postgres server:
-export TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-# Full CLI workflow (new → generate → sqlc → vet → staticcheck → tests), needs sqlc:
-SEMII_E2E=1 go test -run EndToEnd -v ./internal/cli
+# Database tests start Postgres, MySQL and Mongo containers (Docker), or use
+# TEST_POSTGRES_URL / TEST_MYSQL_URL / TEST_MONGO_URL when set.
+# Full CLI workflow on every database (needs sqlc and Docker):
+SEMII_E2E=1 go test -timeout 40m -run EndToEnd -v ./internal/cli
+SEMII_E2E=1 SEMII_E2E_ONLY=sqlite go test -run EndToEnd -v ./internal/cli
 ```

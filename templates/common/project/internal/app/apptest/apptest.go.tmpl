@@ -1,0 +1,54 @@
+// Package apptest builds the real application for integration tests.
+package apptest
+
+import (
+	"log/slog"
+	"testing"
+
+	appdb "{{.Module}}/db"
+	indexes "{{.Module}}/db/mongo"
+	"{{.Module}}/internal/app"
+	"{{.Module}}/internal/config"
+	semiiconfig "{{.Semii}}/config"
+	"{{.Semii}}/testkit"
+)
+
+// testEnv is the environment the test configuration is loaded from.
+var testEnv = map[string]string{
+	"DATABASE_URL": "unused", // the per-test database below is used instead
+	// semii:testenv:start
+	// semii:testenv:end
+}
+
+// New builds the application on a fresh, migrated database and returns it
+// with an in-process HTTP client. Databases come from TEST_DATABASE_URL or
+// a container testkit starts; the test is skipped in -short mode or when
+// neither is available.
+func New(t testing.TB) (*app.App, *testkit.Client) {
+	t.Helper()
+{{- if .Postgres}}
+	conn := testkit.Postgres(t, testkit.WithMigrations(appdb.Migrations()))
+{{- else if .MySQL}}
+	conn := testkit.MySQL(t, testkit.WithMigrations(appdb.Migrations()))
+{{- else if .SQLite}}
+	conn := testkit.SQLite(t, testkit.WithMigrations(appdb.Migrations()))
+{{- else}}
+	client, mdb := testkit.Mongo(t, testkit.WithMongoSetup(indexes.Ensure))
+{{- end}}
+	cfg, err := config.Load(
+		semiiconfig.WithEnv("test"),
+		semiiconfig.WithDir(t.TempDir()),
+		semiiconfig.WithLookup(func(key string) (string, bool) {
+			v, ok := testEnv[key]
+			return v, ok
+		}),
+	)
+	if err != nil {
+		t.Fatalf("apptest: config: %v", err)
+	}
+	a, err := app.Build(cfg, slog.New(slog.DiscardHandler), {{if .Mongo}}client, mdb{{else}}conn{{end}})
+	if err != nil {
+		t.Fatalf("apptest: build: %v", err)
+	}
+	return a, testkit.NewClient(t, a.Handler)
+}

@@ -1,0 +1,67 @@
+// Package auth holds the application's account flows: registration,
+// sign-in, password reset, email verification{{if .Has "apikey"}} and API keys{{end}}. It builds on
+// package semii/auth (imported as semiiauth), which authenticates requests.
+//
+// Each strategy lives in its own file and registers itself in Wire between
+// the semii:strategies markers; `semii generate auth --strategy <name>`
+// adds more. AUTH_STRATEGIES selects which generated strategies are active.
+package auth
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"slices"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"{{.Module}}/internal/config"
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/web"
+)
+
+// strategy issues and revokes one kind of credential.
+type strategy interface {
+	name() string
+	// authenticator turns this strategy's credentials into a principal.
+	authenticator() semiiauth.Authenticator
+	// login answers a successful sign-in with credentials; strategies that
+	// do not sign users in return errNoLogin.
+	login(w http.ResponseWriter, r *http.Request, u User) error
+	// logout revokes the caller's credentials of this kind, if any.
+	logout(w http.ResponseWriter, r *http.Request, p *semiiauth.Principal, in logoutInput) error
+	// revokeAll revokes every credential of userID (after a password reset).
+	// ctx may carry the reset's transaction.
+	revokeAll(ctx context.Context, userID {{.IDGo}}) error
+	// routes registers strategy-specific endpoints under /auth.
+	routes(g *web.Router)
+}
+
+// Wire builds the auth handler and the authenticators for the strategies
+// enabled in AUTH_STRATEGIES. Configuration errors are returned for boot
+// to report; the handler is usable for listing routes regardless.
+func Wire(cfg config.Config, conn {{.DBType}}, log *slog.Logger) (*Handler, []semiiauth.Authenticator, error) {
+	svc, err := newService(cfg, newStore(conn), log)
+	errs := []error{err}
+	all := []strategy{}
+	// semii:strategies:start
+{{- range .Strategies}}
+	all = append(all, {{strategyCtor .}}(svc))
+{{- end}}
+	// semii:strategies:end
+
+	var authenticators []semiiauth.Authenticator
+	for _, name := range cfg.Auth.Strategies {
+		i := slices.IndexFunc(all, func(s strategy) bool { return s.name() == name })
+		if i < 0 {
+			errs = append(errs, fmt.Errorf("AUTH_STRATEGIES: %q is not generated; run `semii generate auth --strategy %s`", name, name))
+			continue
+		}
+		svc.active = append(svc.active, all[i])
+		authenticators = append(authenticators, all[i].authenticator())
+	}
+	return &Handler{svc: svc, strategies: all}, authenticators, errors.Join(errs...)
+}

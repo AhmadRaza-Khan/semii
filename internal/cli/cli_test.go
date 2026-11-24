@@ -42,7 +42,7 @@ func TestUserErrors(t *testing.T) {
 		{"new", "a/b"},
 		{"new", "shop", "--auth", "ldap"},
 		{"new", "shop2", "--auth", "apikey"},
-		{"new", "shop", "--db", "mongo", "--auth", "none"},
+		{"new", "shop", "--db", "oracle", "--auth", "none"},
 		{"new", "shop", "--bogus"},
 		{"generate"},
 		{"g", "wat"},
@@ -95,12 +95,14 @@ func TestGoAtLeast(t *testing.T) {
 	}
 }
 
-// TestEndToEnd drives the real workflow: new, generate, sqlc, build, vet,
-// tests against Postgres, migrate and routes. It needs sqlc on PATH and
-// TEST_DATABASE_URL, and runs only with SEMII_E2E=1.
+// TestEndToEnd drives the real workflow for every database: new,
+// generate, sqlc, build, vet, staticcheck (when installed), routes and the
+// generated tests (against containers testkit starts, so Docker is needed).
+// It needs sqlc on PATH and runs only with SEMII_E2E=1; SEMII_E2E_ONLY=x
+// runs the cases whose name contains x.
 func TestEndToEnd(t *testing.T) {
 	if os.Getenv("SEMII_E2E") != "1" {
-		t.Skip("set SEMII_E2E=1 (with sqlc on PATH and TEST_DATABASE_URL) to run")
+		t.Skip("set SEMII_E2E=1 (with sqlc on PATH and Docker available) to run")
 	}
 	if _, err := exec.LookPath("sqlc"); err != nil {
 		t.Fatal("sqlc not on PATH")
@@ -119,16 +121,30 @@ func TestEndToEnd(t *testing.T) {
 		return out
 	}
 	cases := []struct {
-		name, id, auth, addLater string
+		name, db, id, auth, addLater string
 	}{
-		{"uuid-noauth", "uuid", "none", ""},
-		{"bigint-allauth", "bigint", "jwt,session,apikey", ""},
-		{"uuid-jwt-then-more", "uuid", "jwt", "session,apikey"},
+		{"pg-uuid-noauth", "postgres", "uuid", "none", ""},
+		{"pg-bigint-allauth", "postgres", "bigint", "jwt,session,apikey", ""},
+		{"pg-uuid-jwt-then-more", "postgres", "uuid", "jwt", "session,apikey"},
+		{"mysql-uuid-allauth", "mysql", "uuid", "jwt,session,apikey", ""},
+		{"mysql-bigint-noauth", "mysql", "bigint", "none", ""},
+		{"sqlite-uuid-allauth", "sqlite", "uuid", "jwt,session,apikey", ""},
+		{"sqlite-bigint-session-then-more", "sqlite", "bigint", "session", "jwt,apikey"},
+		{"mongo-allauth", "mongo", "objectid", "jwt,session,apikey", ""},
+	}
+	if only := os.Getenv("SEMII_E2E_ONLY"); only != "" {
+		var keep []struct{ name, db, id, auth, addLater string }
+		for _, tc := range cases {
+			if strings.Contains(tc.name, only) {
+				keep = append(keep, tc)
+			}
+		}
+		cases = keep
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			name := strings.ReplaceAll(tc.name, "-", "")
-			must(t, dir, "new", name, "--auth", tc.auth, "--id", tc.id, "--no-git")
+			must(t, dir, "new", name, "--db", tc.db, "--auth", tc.auth, "--id", tc.id, "--no-git")
 			root := filepath.Join(dir, name)
 			if tc.addLater != "" {
 				must(t, root, "g", "auth", "--strategy", tc.addLater)

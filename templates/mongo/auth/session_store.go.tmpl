@@ -1,0 +1,71 @@
+package auth
+
+import (
+	"context"
+	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	semiiauth "{{.Semii}}/auth"
+	"{{.Semii}}/db/mongodb"
+)
+
+func (s *store) sessions() *mongo.Collection { return s.db.Collection("sessions") }
+
+// SessionIndexes are the sessions collection's indexes; sessions past
+// their absolute expiry are removed by a TTL index.
+func SessionIndexes() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		{Keys: bson.D{ {Key: "user_id", Value: 1} }},
+		{Keys: bson.D{ {Key: "expires_at", Value: 1} }, Options: options.Index().SetExpireAfterSeconds(0)},
+	}
+}
+
+type sessionDoc struct {
+	IDHash     string        `bson:"_id"`
+	UserID     bson.ObjectID `bson:"user_id"`
+	CreatedAt  time.Time     `bson:"created_at"`
+	LastSeenAt time.Time     `bson:"last_seen_at"`
+	ExpiresAt  time.Time     `bson:"expires_at"`
+	UserAgent  string        `bson:"user_agent"`
+	IP         string        `bson:"ip"`
+}
+
+func (s *store) CreateSession(ctx context.Context, r sessionRow) error {
+	_, err := s.sessions().InsertOne(ctx, sessionDoc(r))
+	return err
+}
+
+// FindSession implements semiiauth.SessionStore.
+func (s *store) FindSession(ctx context.Context, idHash string) (semiiauth.Session, error) {
+	var d sessionDoc
+	if err := s.sessions().FindOne(ctx, bson.M{"_id": idHash}).Decode(&d); err != nil {
+		return semiiauth.Session{}, mongodb.MapError(err)
+	}
+	u, err := s.UserByID(ctx, d.UserID)
+	if err != nil {
+		return semiiauth.Session{}, err
+	}
+	return semiiauth.Session{
+		UserID: IDString(d.UserID), Roles: u.Roles,
+		CreatedAt: d.CreatedAt, LastSeenAt: d.LastSeenAt, ExpiresAt: d.ExpiresAt,
+	}, nil
+}
+
+// TouchSession implements semiiauth.SessionStore.
+func (s *store) TouchSession(ctx context.Context, idHash string, at time.Time) error {
+	_, err := s.sessions().UpdateOne(ctx, bson.M{"_id": idHash}, bson.M{"$set": bson.M{"last_seen_at": at}})
+	return err
+}
+
+// DeleteSession implements semiiauth.SessionStore.
+func (s *store) DeleteSession(ctx context.Context, idHash string) error {
+	_, err := s.sessions().DeleteOne(ctx, bson.M{"_id": idHash})
+	return err
+}
+
+func (s *store) DeleteUserSessions(ctx context.Context, id bson.ObjectID) error {
+	_, err := s.sessions().DeleteMany(ctx, bson.M{"user_id": id})
+	return err
+}

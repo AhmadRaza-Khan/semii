@@ -134,9 +134,10 @@ func (p Project) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("db %q must be postgres, mysql, sqlite or mongo", p.DB))
 	}
-	switch p.ID {
-	case "uuid", "bigint":
-	default:
+	switch {
+	case p.DB == "mongo" && p.ID != "objectid":
+		errs = append(errs, fmt.Errorf("id %q: mongo projects use objectid", p.ID))
+	case p.DB != "mongo" && p.ID != "uuid" && p.ID != "bigint":
 		errs = append(errs, fmt.Errorf("id %q must be uuid or bigint", p.ID))
 	}
 	for _, a := range p.Auth {

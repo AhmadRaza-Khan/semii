@@ -1,0 +1,36 @@
+// Package seeds fills a development database. Run it with `semii db seed`.
+package seeds
+
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"{{.Module}}/internal/app"
+)
+
+// Deps are the dependencies seeds may use.
+type Deps struct {
+{{- if .Postgres}}
+	DB  *pgxpool.Pool
+{{- else if .Mongo}}
+	DB  *mongo.Database
+{{- else}}
+	DB  *sql.DB
+{{- end}}
+	Log *slog.Logger
+}
+
+// FromApp builds Deps from a running app (used by `semii db seed`).
+func FromApp(a *app.App) Deps { return Deps{DB: a.DB, Log: a.Log} }
+
+// Seed inserts development data. It must be idempotent (upsert by natural
+// key) because it may run more than once.
+func Seed(ctx context.Context, d Deps) error {
+	// semii:seed:start
+	// semii:seed:end
+	d.Log.Info("seed complete")
+	return nil
+}

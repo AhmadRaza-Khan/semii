@@ -1,0 +1,20 @@
+package {{.Pkg}}
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"{{.Semii}}/web"
+)
+
+// Repository persists {{.PluralVar}}. Implementations return db.ErrNotFound
+// when no row matches, db.ErrConflict on unique violations and
+// db.ErrForeignKey on foreign-key violations, wrapped with context.
+type Repository interface {
+	Create(ctx context.Context, in CreateInput) ({{.Name}}, error)
+	Get(ctx context.Context, id {{.IDGo}}) ({{.Name}}, error)
+	List(ctx context.Context, f ListFilter, p web.CursorParams) ([]{{.Name}}, *string, error)
+	Update(ctx context.Context, id {{.IDGo}}, in UpdateInput) ({{.Name}}, error)
+	Delete(ctx context.Context, id {{.IDGo}}) error
+}

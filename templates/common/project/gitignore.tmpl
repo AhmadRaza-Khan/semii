@@ -1,0 +1,13 @@
+/bin/
+/tmp/
+/.semii/tmp/
+.env
+.env.local
+*.test
+*.out
+coverage.*
+{{- if .SQLite}}
+*.db
+*.db-wal
+*.db-shm
+{{- end}}

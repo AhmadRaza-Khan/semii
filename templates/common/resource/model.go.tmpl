@@ -1,0 +1,56 @@
+package {{.Pkg}}
+
+import (
+	"encoding/json"
+	"time"
+
+	"net/http"
+	"strconv"
+
+	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"github.com/shopspring/decimal"
+	"{{.Semii}}/web"
+)
+
+// {{.Name}} is the API representation of a row in {{.Table}}.
+type {{.Name}} struct {
+	ID {{.IDGo}} `json:"id"`
+{{- range .Fields}}
+	{{.GoName}} {{.GoType}} `json:"{{.JSONTag}}"`
+{{- end}}
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// now is the timestamp used for created_at and updated_at: UTC, truncated
+// to the microsecond precision databases store.
+func now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
+
+// IDString formats an id for URLs.
+func IDString(id {{.IDGo}}) string {
+{{- if .SeqID}}
+	return strconv.FormatInt(id, 10)
+{{- else if .ObjectID}}
+	return id.Hex()
+{{- else}}
+	return id.String()
+{{- end}}
+}
+
+// pathID parses the {id} path value; malformed ids are a 400.
+func pathID(r *http.Request) ({{.IDGo}}, error) {
+{{- if .SeqID}}
+	return web.PathInt64(r, "id")
+{{- else if .ObjectID}}
+	id, err := bson.ObjectIDFromHex(r.PathValue("id"))
+	if err != nil {
+		e := web.NewError(http.StatusBadRequest, "invalid_path_param", "path parameter id must be a valid ObjectID")
+		e.Fields = []web.FieldError{ {Field: "id", Code: "invalid_path_param", Message: "must be a valid ObjectID"} }
+		return id, e
+	}
+	return id, nil
+{{- else}}
+	return web.PathUUID(r, "id")
+{{- end}}
+}

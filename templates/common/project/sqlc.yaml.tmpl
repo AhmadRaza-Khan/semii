@@ -1,0 +1,91 @@
+# sqlc compiles db/queries/*.sql against the schema in db/migrations into
+# type-safe Go in db/sqlc (DO NOT EDIT there). Run: sqlc generate
+# The overrides give every database the same Go types (uuid.UUID,
+# decimal.Decimal, time.Time, pointers for nullable columns).
+version: "2"
+sql:
+{{- if .Postgres}}
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries
+    gen:
+      go:
+        package: sqlc
+        out: db/sqlc
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type: {import: github.com/google/uuid, type: UUID, pointer: true}
+          - db_type: pg_catalog.numeric
+            go_type: github.com/shopspring/decimal.Decimal
+          - db_type: pg_catalog.numeric
+            nullable: true
+            go_type: {import: github.com/shopspring/decimal, type: Decimal, pointer: true}
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type: {import: time, type: Time, pointer: true}
+          - db_type: date
+            go_type: time.Time
+          - db_type: date
+            nullable: true
+            go_type: {import: time, type: Time, pointer: true}
+          - db_type: jsonb
+            go_type: encoding/json.RawMessage
+          - db_type: jsonb
+            nullable: true
+            go_type: encoding/json.RawMessage
+{{- else if .MySQL}}
+  - engine: mysql
+    schema: db/migrations
+    queries: db/queries
+    gen:
+      go:
+        package: sqlc
+        out: db/sqlc
+        overrides:
+          - {db_type: "char", go_type: "github.com/google/uuid.UUID"}
+          - {db_type: "char", nullable: true, go_type: {import: "github.com/google/uuid", type: "UUID", pointer: true}}
+          - {db_type: "decimal", go_type: "github.com/shopspring/decimal.Decimal"}
+          - {db_type: "decimal", nullable: true, go_type: {import: "github.com/shopspring/decimal", type: "Decimal", pointer: true}}
+          - {db_type: "json", go_type: "{{.Semii}}/db/sqldb.JSON"}
+          - {db_type: "json", nullable: true, go_type: "{{.Semii}}/db/sqldb.JSON"}
+          - {db_type: "varchar", nullable: true, go_type: {type: "string", pointer: true}}
+          - {db_type: "text", nullable: true, go_type: {type: "string", pointer: true}}
+          - {db_type: "int", nullable: true, go_type: {type: "int32", pointer: true}}
+          - {db_type: "bigint", nullable: true, go_type: {type: "int64", pointer: true}}
+          - {db_type: "tinyint", nullable: true, go_type: {type: "bool", pointer: true}}
+          - {db_type: "double", nullable: true, go_type: {type: "float64", pointer: true}}
+          - {db_type: "date", nullable: true, go_type: {import: "time", type: "Time", pointer: true}}
+          - {db_type: "datetime", nullable: true, go_type: {import: "time", type: "Time", pointer: true}}
+{{- else}}
+  - engine: sqlite
+    schema: db/migrations
+    queries: db/queries
+    gen:
+      go:
+        package: sqlc
+        out: db/sqlc
+        overrides:
+          - {db_type: "UUID", go_type: "github.com/google/uuid.UUID"}
+          - {db_type: "UUID", nullable: true, go_type: {import: "github.com/google/uuid", type: "UUID", pointer: true}}
+          - {db_type: "DECIMAL_TEXT", go_type: "github.com/shopspring/decimal.Decimal"}
+          - {db_type: "DECIMAL_TEXT", nullable: true, go_type: {import: "github.com/shopspring/decimal", type: "Decimal", pointer: true}}
+          - {db_type: "JSON", go_type: "{{.Semii}}/db/sqldb.JSON"}
+          - {db_type: "JSON", nullable: true, go_type: "{{.Semii}}/db/sqldb.JSON"}
+          - {db_type: "INT", go_type: "int32"}
+          - {db_type: "INT", nullable: true, go_type: {type: "int32", pointer: true}}
+          - {db_type: "VARCHAR", nullable: true, go_type: {type: "string", pointer: true}}
+          - {db_type: "TEXT", nullable: true, go_type: {type: "string", pointer: true}}
+          - {db_type: "BIGINT", nullable: true, go_type: {type: "int64", pointer: true}}
+          - {db_type: "BOOLEAN", nullable: true, go_type: {type: "bool", pointer: true}}
+          - {db_type: "DOUBLE", nullable: true, go_type: {type: "float64", pointer: true}}
+          - {db_type: "DATE", go_type: "time.Time"}
+          - {db_type: "DATE", nullable: true, go_type: {import: "time", type: "Time", pointer: true}}
+          - {db_type: "DATETIME", nullable: true, go_type: {import: "time", type: "Time", pointer: true}}
+{{- end}}
