@@ -14,11 +14,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AhmadRaza-Khan/semii/auth"
 )
 
 // baseURL is the origin requests are attributed to; it only matters for
-// the cookie jar.
-var baseURL = &url.URL{Scheme: "http", Host: "example.test"}
+// the cookie jar. It is https so Secure cookies (the default outside
+// development) are sent back; requests still go straight to the handler.
+var baseURL = &url.URL{Scheme: "https", Host: "example.test"}
 
 // Client sends requests straight to a handler through httptest, keeping a
 // cookie jar across requests so session flows work.
@@ -26,6 +29,15 @@ type Client struct {
 	t   testing.TB
 	h   http.Handler
 	jar http.CookieJar
+	as  *auth.Principal
+}
+
+// As returns a client whose requests all run as p, injected into the
+// request context (see Request.As). It shares the cookie jar.
+func (c *Client) As(p *auth.Principal) *Client {
+	cp := *c
+	cp.as = p
+	return &cp
 }
 
 // NewClient returns a Client for h.
@@ -50,7 +62,7 @@ func (c *Client) PATCH(path string) *Request { return c.newRequest(http.MethodPa
 func (c *Client) DELETE(path string) *Request { return c.newRequest(http.MethodDelete, path) }
 
 func (c *Client) newRequest(method, path string) *Request {
-	return &Request{c: c, method: method, path: path, header: http.Header{}, query: url.Values{}}
+	return &Request{c: c, method: method, path: path, header: http.Header{}, query: url.Values{}, as: c.as}
 }
 
 // Request is a request being built. Its methods return it for chaining.
@@ -62,7 +74,13 @@ type Request struct {
 	query   url.Values
 	body    []byte
 	cookies []*http.Cookie
+	as      *auth.Principal
 }
+
+// As runs the request as p without real credentials: the principal is
+// placed in the request context, where auth.Middleware keeps it and route
+// policies see it. Use it to test authorization, not authentication.
+func (r *Request) As(p *auth.Principal) *Request { r.as = p; return r }
 
 // JSON sets v, encoded as JSON, as the body. A []byte or string is sent
 // verbatim, which allows malformed bodies in tests.
@@ -113,6 +131,9 @@ func (r *Request) Do() *Response {
 	}
 	req := httptest.NewRequest(r.method, target, body)
 	req.Header = r.header.Clone()
+	if r.as != nil {
+		req = req.WithContext(auth.WithPrincipal(req.Context(), r.as))
+	}
 	for _, ck := range r.c.jar.Cookies(baseURL) {
 		req.AddCookie(ck)
 	}

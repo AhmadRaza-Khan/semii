@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/AhmadRaza-Khan/semii/auth"
 )
 
 type fakeT struct {
@@ -84,6 +86,27 @@ func TestClientRoundTrip(t *testing.T) {
 	_ = c.DELETE("/x").Do()
 }
 
+func TestAs(t *testing.T) {
+	h := auth.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := auth.FromContext(r.Context())
+		if !ok {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = w.Write([]byte(p.ID))
+	}))
+	c := NewClient(t, h)
+	c.GET("/").Do().ExpectStatus(401)
+	if got := string(c.GET("/").As(&auth.Principal{ID: "u1"}).Do().ExpectStatus(200).Body()); got != "u1" {
+		t.Errorf("request As: %q", got)
+	}
+	as := c.As(&auth.Principal{ID: "u2"})
+	if got := string(as.GET("/").Do().Body()); got != "u2" {
+		t.Errorf("client As: %q", got)
+	}
+	c.GET("/").Do().ExpectStatus(401) // the original client is unchanged
+}
+
 func TestAssertionsFail(t *testing.T) {
 	h := handler()
 	echo := func(tb testing.TB) *Response {
@@ -112,5 +135,25 @@ func TestAssertionsFail(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) { expectFail(t, fn) })
+	}
+}
+
+func TestSecureCookiesRoundTrip(t *testing.T) {
+	h := http.NewServeMux()
+	h.HandleFunc("GET /set", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "s", Value: "v", Path: "/", Secure: true, HttpOnly: true})
+	})
+	h.HandleFunc("GET /get", func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("s")
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = w.Write([]byte(c.Value))
+	})
+	c := NewClient(t, h)
+	c.GET("/set").Do()
+	if got := string(c.GET("/get").Do().ExpectStatus(200).Body()); got != "v" {
+		t.Errorf("%q", got)
 	}
 }
