@@ -7,6 +7,8 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-25
+
 ### Security
 
 Fixes from a manual pentest of a generated app (all strategies, Postgres):
@@ -63,3 +65,6 @@ Fixes from a manual pentest of a generated app (all strategies, Postgres):
   CI, an optional SSH deploy workflow, systemd, PM2 and Nginx files, and
   `api migrate`.
 - Documentation in `docs/` and two example apps in `examples/`.
+
+[Unreleased]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/AhmadRaza-Khan/semii/releases/tag/v1.0.0

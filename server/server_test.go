@@ -69,6 +69,9 @@ func (h *harness) get(path string) (int, map[string]any) {
 
 func (h *harness) wait() error {
 	h.t.Helper()
+	// The client may hold a spare connection that never sent a request;
+	// Shutdown waits up to 5 s for those, so close them.
+	http.DefaultClient.CloseIdleConnections()
 	select {
 	case err := <-h.done:
 		return err
@@ -102,6 +105,7 @@ func TestHealthEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, _ = io.Copy(io.Discard, hz.Body)
 	hz.Body.Close()
 	for k, v := range map[string]string{"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
 		"X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'"} {
