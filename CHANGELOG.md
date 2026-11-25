@@ -14,6 +14,9 @@ server, logx and testkit are frozen from v1.0.0 until v2.
   `go get …/semii@latest` instead of requiring `SEMII_LOCAL_PATH`.
 - `web.Decode` locates malformed `Date` fields itself, since Go 1.27's
   `encoding/json` no longer reports their path.
+- Router benchmarks compare against ServeMux both bare and behind the
+  generated app's middleware (RequestID, Logger, Recover), writing through
+  a discard writer instead of a growing recorder.
 - Generated code always imports `github.com/google/uuid`; on Go 1.27
   goimports would otherwise pick the new standard library `uuid` package.
 

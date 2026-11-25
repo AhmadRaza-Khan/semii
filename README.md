@@ -230,7 +230,7 @@ indexes declared in `db/mongo`).
 
 ```sh
 go test -race -cover ./...
-go test -run x -bench . ./web        # router overhead vs plain ServeMux
+go test -run x -bench . ./web        # router overhead vs plain ServeMux (release bar: *Stack pair)
 
 # Database tests start Postgres, MySQL and Mongo containers (Docker), or use
 # TEST_POSTGRES_URL / TEST_MYSQL_URL / TEST_MONGO_URL when set.

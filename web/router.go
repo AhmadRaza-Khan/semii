@@ -239,16 +239,16 @@ func (r *Router) handle(pattern string, ep endpoint, name string, mounted bool) 
 	}
 
 	ep.rt, ep.c = rt, r.c
-	var h http.Handler = ep
+	var h http.Handler
 	if len(r.mw) > 0 {
 		// Record the pattern before group middleware runs, so their
 		// responses are logged with the route too.
 		ep.setPattern = false
-		h = Chain(ep, r.mw...)
+		h = Chain(&ep, r.mw...)
 		h = routeEntry{rt: rt, next: h}
 	} else {
 		ep.setPattern = true
-		h = ep
+		h = &ep
 	}
 	if full == fallbackPattern {
 		r.c.root = h // takes over unmatched requests from the fallback
@@ -338,7 +338,7 @@ type endpoint struct {
 	setPattern bool // no routeEntry in front of this endpoint
 }
 
-func (e endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (e *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e.setPattern {
 		if s := stateFrom(r.Context()); s != nil {
 			s.pattern = e.rt.pattern
@@ -378,7 +378,7 @@ func (e endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.c.writers.Put(rw)
 }
 
-func (e endpoint) finish(w http.ResponseWriter, r *http.Request, err error, wt writeTracker) {
+func (e *endpoint) finish(w http.ResponseWriter, r *http.Request, err error, wt writeTracker) {
 	if err == nil {
 		return
 	}
