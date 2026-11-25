@@ -119,7 +119,8 @@ func TestNotFoundAndMethodNotAllowed(t *testing.T) {
 
 	// ServeMux redirects still pass through.
 	r.HandleFunc("GET /dir/", ok).Public()
-	if w := do(t, r, "GET", "/dir", ""); w.Code != http.StatusMovedPermanently {
+	// Go 1.26 answers 301, Go 1.27+ 307.
+	if w := do(t, r, "GET", "/dir", ""); w.Code != http.StatusMovedPermanently && w.Code != http.StatusTemporaryRedirect {
 		t.Errorf("redirect status %d", w.Code)
 	}
 }

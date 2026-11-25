@@ -19,7 +19,7 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
       - run: go vet ./...
-      - run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
 
   test:
     runs-on: ubuntu-latest
@@ -44,7 +44,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.29.0
-      - run: go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+      - run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
       - name: new, generate, vet, staticcheck and tests for ${{ matrix.db }}
         env:
           SEMII_E2E: "1"

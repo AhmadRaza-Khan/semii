@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -56,5 +57,34 @@ func TestDate(t *testing.T) {
 	v, err2 := DecodeQuery[q](httptest.NewRequest("GET", "/?due=2024-01-02", nil))
 	if err2 != nil || v.Due.String() != "2024-01-02" {
 		t.Errorf("%+v %v", v, err2)
+	}
+}
+
+func TestDatePathNested(t *testing.T) {
+	type item struct {
+		On Date `json:"on"`
+	}
+	type body struct {
+		Name  string         `json:"name"`
+		Items []item         `json:"items"`
+		Due   Optional[Date] `json:"due"`
+		Ptr   *Date          `json:"ptr"`
+	}
+	cases := map[string]string{
+		`{"items":[{"on":"2024-01-01"},{"on":"nope"}]}`: "items.on",
+		`{"due":"2024-13-40"}`:                          "due",
+		`{"ptr":7}`:                                     "ptr",
+	}
+	for in, want := range cases {
+		r := httptest.NewRequest("POST", "/", strings.NewReader(in))
+		r.Header.Set("Content-Type", "application/json")
+		_, err := Decode[body](r)
+		e, ok := err.(*Error)
+		if !ok || len(e.Fields) != 1 || e.Fields[0].Field != want {
+			t.Errorf("%s: %#v", in, err)
+		}
+	}
+	if p, bad := datePath(reflect.TypeFor[body](), map[string]any{"ptr": nil}); bad || p != "" {
+		t.Errorf("null date flagged: %q", p)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
@@ -25,10 +26,16 @@ func Decode[T any](r *http.Request) (T, error) {
 	if r.Body == nil || r.Body == http.NoBody {
 		return v, NewError(http.StatusBadRequest, "empty_body", "request body is required")
 	}
-	dec := json.NewDecoder(r.Body)
+	// The body is buffered (BodyLimit caps it) so a failing Date can be
+	// located afterwards; see datePath.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return v, decodeError(err, nil, nil)
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&v); err != nil {
-		return v, decodeError(err)
+		return v, decodeError(err, body, reflect.TypeFor[T]())
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		var mbe *http.MaxBytesError
@@ -53,7 +60,9 @@ func checkJSONContentType(r *http.Request) error {
 		"Content-Type must be application/json")
 }
 
-func decodeError(err error) error {
+// decodeError maps a decoding error to a problem. body and t, when set,
+// let it locate a malformed Date, whose path encoding/json omits.
+func decodeError(err error, body []byte, t reflect.Type) error {
 	var mbe *http.MaxBytesError
 	var syn *json.SyntaxError
 	var typ *json.UnmarshalTypeError
@@ -69,6 +78,12 @@ func decodeError(err error) error {
 			Detail: fmt.Sprintf("malformed JSON at offset %d", syn.Offset), Err: err}
 	case errors.As(err, &typ):
 		field := typ.Field
+		if field == "" && typ.Type == dateType && t != nil {
+			var raw any
+			if json.Unmarshal(body, &raw) == nil {
+				field, _ = datePath(t, raw)
+			}
+		}
 		if field == "" {
 			return &Error{Status: http.StatusBadRequest, Code: "invalid_json",
 				Detail: "request body must be a JSON " + typ.Type.Kind().String(), Err: err}
@@ -156,4 +171,88 @@ func (o Optional[T]) Ptr() *T {
 	}
 	v := o.Value
 	return &v
+}
+
+// datePath returns the dotted JSON path of the first value in raw that t
+// would decode into a Date but which is not a valid date. Since Go 1.27,
+// encoding/json leaves Field empty for errors returned by UnmarshalJSON,
+// so Decode recovers the path itself. Slice indices are not included,
+// matching encoding/json.
+func datePath(t reflect.Type, raw any) (string, bool) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if raw == nil {
+		return "", false // null leaves a value unchanged
+	}
+	if t == dateType {
+		s, ok := raw.(string)
+		if !ok {
+			return "", true
+		}
+		_, err := ParseDate(s)
+		return "", err != nil
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		if f, ok := t.FieldByName("Value"); ok && strings.HasPrefix(t.Name(), "Optional[") {
+			return datePath(f.Type, raw)
+		}
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		for i := range t.NumField() {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "-" || (!f.IsExported() && !f.Anonymous) {
+				continue
+			}
+			if f.Anonymous && name == "" {
+				if p, bad := datePath(f.Type, raw); bad {
+					return p, true
+				}
+				continue
+			}
+			if name == "" {
+				name = f.Name
+			}
+			val, ok := m[name]
+			if !ok {
+				for k, v := range m {
+					if strings.EqualFold(k, name) {
+						val, ok = v, true
+						break
+					}
+				}
+			}
+			if !ok {
+				continue
+			}
+			if p, bad := datePath(f.Type, val); bad {
+				if p != "" {
+					return name + "." + p, true
+				}
+				return name, true
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		list, _ := raw.([]any)
+		for _, v := range list {
+			if p, bad := datePath(t.Elem(), v); bad {
+				return p, true
+			}
+		}
+	case reflect.Map:
+		m, _ := raw.(map[string]any)
+		for k, v := range m {
+			if p, bad := datePath(t.Elem(), v); bad {
+				if p != "" {
+					return k + "." + p, true
+				}
+				return k, true
+			}
+		}
+	}
+	return "", false
 }

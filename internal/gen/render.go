@@ -3,6 +3,7 @@ package gen
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -77,6 +78,7 @@ func (r Renderer) Render(name, target string, data any) ([]byte, error) {
 // FormatGo runs goimports on src (G1). Imports are never searched for:
 // templates list every import they may need.
 func FormatGo(filename string, src []byte) ([]byte, error) {
+	src = pinUUID(filename, src)
 	out, err := imports.Process(filename, src, &imports.Options{
 		Comments: true, TabIndent: true, TabWidth: 8, FormatOnly: false,
 	})
@@ -84,6 +86,48 @@ func FormatGo(filename string, src []byte) ([]byte, error) {
 		return nil, fmt.Errorf("format %s: %w\n%s", filename, err, numbered(src))
 	}
 	return out, nil
+}
+
+// uuidModule is the UUID package generated code uses.
+const uuidModule = "github.com/google/uuid"
+
+// pinUUID imports github.com/google/uuid into a file that refers to uuid
+// without importing it. Since Go 1.27 the standard library has a "uuid"
+// package, which goimports would otherwise choose. Unparsable source is
+// returned unchanged for goimports to report.
+func pinUUID(filename string, src []byte) []byte {
+	if !bytes.Contains(src, []byte("uuid.")) {
+		return src
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filename, src, parser.ParseComments)
+	if err != nil {
+		return src
+	}
+	for _, imp := range f.Imports {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		if (imp.Name != nil && imp.Name.Name == "uuid") || (imp.Name == nil && path.Base(p) == "uuid") {
+			return src
+		}
+	}
+	used := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "uuid" && id.Obj == nil {
+				used = true
+			}
+		}
+		return !used
+	})
+	if !used {
+		return src
+	}
+	astutil.AddImport(fset, f, uuidModule)
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, f); err != nil {
+		return src
+	}
+	return buf.Bytes()
 }
 
 func numbered(src []byte) string {

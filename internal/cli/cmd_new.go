@@ -14,7 +14,7 @@ import (
 )
 
 // EnvLocalSemii points generated projects at a local framework checkout
-// via a replace directive, until semii is published.
+// via a replace directive, for working on the framework itself.
 const EnvLocalSemii = "SEMII_LOCAL_PATH"
 
 func runNew(e *Env, args []string) error {
@@ -92,11 +92,16 @@ func runNew(e *Env, args []string) error {
 	if err := e.sqlcGenerate(root); err != nil {
 		return err
 	}
+	// A development CLI has no release to require: fetch the newest
+	// published framework instead.
+	if local == "" && !gen.IsRelease(Version) {
+		e.printf("  run       go get %s@latest\n", gen.SemiiModule)
+		if err := e.runTool(root, "go", "get", gen.SemiiModule+"@latest"); err != nil {
+			return toolErr(fmt.Errorf("%w\nhint: to build against a local checkout of the framework, set %s to its path", err, EnvLocalSemii))
+		}
+	}
 	e.printf("  run       go mod tidy\n")
 	if err := e.runTool(root, "go", "mod", "tidy"); err != nil {
-		if local == "" {
-			return toolErr(fmt.Errorf("%w\nhint: semii is not published yet; set %s to a local checkout of the framework", err, EnvLocalSemii))
-		}
 		return err
 	}
 	if !*noGit {

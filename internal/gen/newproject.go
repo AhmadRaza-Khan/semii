@@ -73,7 +73,7 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 	}
 	data := ProjectData{
 		Name: o.Name, Module: o.Module, Version: o.Version, Semii: SemiiModule,
-		SemiiVersion: requireVersion(o.Version), LocalSemii: o.LocalSemii,
+		SemiiVersion: requireVersion(o.Version, o.LocalSemii != ""), LocalSemii: o.LocalSemii,
 		DBName: Snake(o.Name), DB: o.DB, ID: o.ID,
 	}
 	if data.DBName == "" {
@@ -123,13 +123,23 @@ func PlanNew(rd Renderer, root string, o NewOptions) (*Plan, Project, error) {
 }
 
 // requireVersion is the framework version written to go.mod: the CLI's own
-// version when it is a release, otherwise a placeholder that a replace
-// directive (or the first release) resolves.
-func requireVersion(v string) string {
-	if strings.HasPrefix(v, "v") && !strings.Contains(v, "-dev") {
+// version when it is a release; a placeholder that the replace directive
+// resolves for a local checkout; otherwise empty, and `semii new` runs
+// `go get <framework>@latest` to fetch it.
+func requireVersion(v string, local bool) string {
+	switch {
+	case IsRelease(v):
 		return v
+	case local:
+		return "v0.0.0-00010101000000-000000000000"
 	}
-	return "v0.0.0-00010101000000-000000000000"
+	return ""
+}
+
+// IsRelease reports whether v is a release version such as v1.2.3, as
+// opposed to a development build.
+func IsRelease(v string) bool {
+	return strings.HasPrefix(v, "v") && !strings.Contains(v, "-dev")
 }
 
 func sortedKeys(m map[string]string) []string { return slices.Sorted(maps.Keys(m)) }

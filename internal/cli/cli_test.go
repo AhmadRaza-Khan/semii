@@ -88,8 +88,8 @@ func TestParseInterleaved(t *testing.T) {
 }
 
 func TestGoAtLeast(t *testing.T) {
-	for v, want := range map[string]bool{"go1.24.3": true, "go1.25": true, "go2.0": true, "go1.23.9": false, "go1.24rc1": true, "devel": false} {
-		if goAtLeast(v, 1, 24) != want {
+	for v, want := range map[string]bool{"go1.26.3": true, "go1.27": true, "go2.0": true, "go1.25.9": false, "go1.26rc1": true, "devel": false} {
+		if goAtLeast(v, 1, 26) != want {
 			t.Errorf("%s", v)
 		}
 	}

@@ -264,7 +264,10 @@ func TestPlanNew(t *testing.T) {
 	if _, _, err := PlanNew(rd, root, NewOptions{Name: "a", Module: "a", DB: "postgres", ID: "int"}); err == nil {
 		t.Error("bad id accepted")
 	}
-	if requireVersion("v0.3.0-dev") != "v0.0.0-00010101000000-000000000000" {
+	if requireVersion("v0.3.0-dev", false) != "" || requireVersion("v1.2.3", false) != "v1.2.3" {
+		t.Error("requireVersion without a local checkout")
+	}
+	if requireVersion("v0.3.0-dev", true) != "v0.0.0-00010101000000-000000000000" {
 		t.Error("dev version")
 	}
 }
@@ -417,5 +420,21 @@ func TestPlanAuth(t *testing.T) {
 	}
 	if v := migrationVersions(root, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), 3); strings.Join(v, ",") != "20240101000000,20240101000001,20240101000002" {
 		t.Errorf("%v", v)
+	}
+}
+
+func TestFormatGoPinsGoogleUUID(t *testing.T) {
+	src := "package x\n\nfunc f() uuid.UUID { return uuid.New() }\n"
+	out, err := FormatGo("x.go", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"github.com/google/uuid"`) {
+		t.Errorf("stdlib uuid chosen:\n%s", out)
+	}
+	// A local variable named uuid is left alone.
+	local := "package x\n\nfunc f(uuid struct{ A int }) int { return uuid.A }\n"
+	if out, err := FormatGo("x.go", []byte(local)); err != nil || strings.Contains(string(out), "import") {
+		t.Errorf("%v\n%s", err, out)
 	}
 }

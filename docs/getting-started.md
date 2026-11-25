@@ -2,7 +2,7 @@
 
 ## Install
 
-You need Go 1.24 or newer, [sqlc](https://docs.sqlc.dev) (for Postgres,
+You need Go 1.26 or newer, [sqlc](https://docs.sqlc.dev) (for Postgres,
 MySQL and SQLite projects) and Docker for the database and integration
 tests.
 
@@ -11,6 +11,9 @@ go install github.com/AhmadRaza-Khan/semii/cmd/semii@latest
 go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 semii version
 ```
+
+`go install` puts binaries in `$(go env GOPATH)/bin` (usually `~/go/bin`);
+add it to PATH if `semii` is not found.
 
 ## Create an API
 

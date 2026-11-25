@@ -36,7 +36,7 @@ func installHint(name string) string {
 	case "sqlc":
 		return "; install it: go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest (or see https://docs.sqlc.dev)"
 	case "go":
-		return "; install Go 1.24 or newer from https://go.dev/dl"
+		return "; install Go 1.26 or newer from https://go.dev/dl"
 	case "git":
 		return "; install git or pass --no-git"
 	}

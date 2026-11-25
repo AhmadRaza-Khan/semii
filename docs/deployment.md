@@ -29,7 +29,7 @@ production unless `DB_AUTO_MIGRATE_PRODUCTION=true`).
 
 ## Docker
 
-The generated `Dockerfile` builds with Go 1.24 and runs on
+The generated `Dockerfile` builds with Go 1.26 and runs on
 `gcr.io/distroless/static-debian12:nonroot`: no shell, not root, about
 25 MB.
 
@@ -43,9 +43,10 @@ docker run --env-file prod.env shop migrate
 migrations on boot. SQLite projects keep the database on the `/data`
 volume.
 
-Until semii is published, projects created with `SEMII_LOCAL_PATH` point
-at a local checkout through a `replace` directive outside the build
-context: run `go mod vendor` before `docker build`.
+Projects created with `SEMII_LOCAL_PATH` point at a local framework
+checkout through a `replace` directive outside the build context: run
+`go mod vendor` before `docker build`, or drop the directive and
+`go get github.com/AhmadRaza-Khan/semii@latest`.
 
 ## systemd
 

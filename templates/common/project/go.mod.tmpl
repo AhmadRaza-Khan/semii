@@ -1,19 +1,12 @@
 module {{.Module}}
 
-go 1.24
+go 1.26
+{{- if .SemiiVersion}}
 
 require {{.Semii}} {{.SemiiVersion}}
-
-// Pinned for Go 1.24: testcontainers (used by semii/testkit) depends on the
-// Docker client, whose tests import these modules; without a pin, go mod
-// tidy picks versions that need a newer Go. Remove once on Go 1.26+.
-require (
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.35.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.35.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
-)
+{{- end}}
 {{- if .LocalSemii}}
 
-// Local framework checkout (SEMII_LOCAL_PATH). Remove once semii is published.
+// Local framework checkout (SEMII_LOCAL_PATH).
 replace {{.Semii}} => {{.LocalSemii}}
 {{- end}}

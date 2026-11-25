@@ -40,10 +40,10 @@ func runDoctor(e *Env, args []string) error {
 	// Go toolchain.
 	if out, err := exec.Command("go", "env", "GOVERSION").Output(); err != nil {
 		add("FAIL", "go", "go not found on PATH"+installHint("go"))
-	} else if v := strings.TrimSpace(string(out)); goAtLeast(v, 1, 24) {
+	} else if v := strings.TrimSpace(string(out)); goAtLeast(v, 1, 26) {
 		add("PASS", "go", v)
 	} else {
-		add("FAIL", "go", v+" (need go1.24 or newer)")
+		add("FAIL", "go", v+" (need go1.26 or newer)")
 	}
 
 	p, err := gen.FindProject(e.Dir)
@@ -120,7 +120,7 @@ func summarize(results []checkResult) error {
 	return nil
 }
 
-// goAtLeast parses "go1.24.3" style versions.
+// goAtLeast parses "go1.26.3" style versions.
 func goAtLeast(v string, major, minor int) bool {
 	v = strings.TrimPrefix(v, "go")
 	parts := strings.SplitN(v, ".", 3)

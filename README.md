@@ -18,14 +18,14 @@ reference, one page per package, deployment). **Examples:**
 | M5 | testkit + MySQL/SQLite/Mongo | done |
 | M6 | ops, docs, examples | done |
 
-## Quick start (from a local checkout)
+## Quick start
 
-semii is not published yet, so generated projects point at this checkout
-with a `replace` directive. sqlc must be on PATH.
+Needs Go 1.26 or newer, with sqlc and `$(go env GOPATH)/bin` on PATH.
+`semii new` fetches the framework from GitHub; to build against a local
+checkout instead, `export SEMII_LOCAL_PATH=/path/to/semii` first.
 
 ```sh
-go install ./cmd/semii
-export SEMII_LOCAL_PATH=$PWD
+go install github.com/AhmadRaza-Khan/semii/cmd/semii@latest
 cd /tmp && semii new shop --auth jwt,session   # or --auth none
 cd shop && cp .env.example .env && docker compose up -d db
 semii migrate up
@@ -206,9 +206,8 @@ indexes declared in `db/mongo`).
   in `<strategy>_store.go`; transactions travel in the context, so the
   password reset still revokes sessions and refresh tokens atomically on
   every database.
-- **Generated go.mod pins three OpenTelemetry modules** for Go 1.24:
-  testcontainers' Docker dependency would otherwise pull versions needing
-  Go 1.26 during `go mod tidy`. Remove the pins once on Go 1.26+.
+- **Go 1.26 is the minimum** (the two latest stable releases), for the
+  framework and generated projects alike.
 
 ### M6
 
@@ -217,9 +216,11 @@ indexes declared in `db/mongo`).
   staticcheck, tests with `-race`, build, image on main; govulncheck as its
   own job), optional `--deploy ssh` workflow, and systemd, PM2 and Nginx
   files. The binary has an `api migrate` command for deploys.
-- **Until semii is published**, the `replace` directive in projects made
-  with `SEMII_LOCAL_PATH` points outside the Docker build context: run
-  `go mod vendor` before `docker build`, and CI will not resolve it.
+- **Framework resolution:** a release CLI requires its own version in the
+  generated go.mod; a development build runs `go get …/semii@latest`.
+  With `SEMII_LOCAL_PATH` the project uses a `replace` directive instead,
+  which points outside the Docker build context: run `go mod vendor`
+  before `docker build`, and CI will not resolve it.
 - **Releases:** `.goreleaser.yaml` and `.github/workflows/release.yml`
   build the CLI for linux/amd64, linux/arm64, darwin/arm64 and
   windows/amd64 on a `v*` tag, stamping `internal/cli.Version`.

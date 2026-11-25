@@ -7,6 +7,16 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+### Changed
+
+- Go 1.26 is the minimum version; dependencies updated (govulncheck clean).
+- `semii new` from a development build fetches the framework with
+  `go get …/semii@latest` instead of requiring `SEMII_LOCAL_PATH`.
+- `web.Decode` locates malformed `Date` fields itself, since Go 1.27's
+  `encoding/json` no longer reports their path.
+- Generated code always imports `github.com/google/uuid`; on Go 1.27
+  goimports would otherwise pick the new standard library `uuid` package.
+
 ### Added
 
 - `web`: ServeMux router with groups, error-returning handlers and
