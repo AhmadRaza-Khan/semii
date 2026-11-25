@@ -203,3 +203,22 @@ func TestModuleVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildRef(t *testing.T) {
+	info := func(v string) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{Main: debug.Module{Version: v}}, true }
+	}
+	for v, want := range map[string]string{
+		"v1.0.3-0.20261125134551-3e62e2d3a6fd": "v1.0.3-0.20261125134551-3e62e2d3a6fd", // go install @main
+		"v1.0.2":                               "v1.0.2",
+		"(devel)":                              "latest",
+		"v1.0.2+dirty":                         "latest",
+	} {
+		if got := buildRef(info(v)); got != want {
+			t.Errorf("buildRef(%q) = %q, want %q", v, got, want)
+		}
+	}
+	if got := buildRef(func() (*debug.BuildInfo, bool) { return nil, false }); got != "latest" {
+		t.Errorf("no build info: %q", got)
+	}
+}

@@ -39,6 +39,21 @@ func moduleVersion(v string, info func() (*debug.BuildInfo, bool)) string {
 
 var releaseRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
+// frameworkRef is the framework version a development CLI generates
+// projects against: the exact commit it was built from when installed
+// with `go install …@<commit or branch>` (a pseudo-version), so templates
+// and framework match; otherwise "latest".
+var frameworkRef = buildRef(debug.ReadBuildInfo)
+
+var moduleVersionRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
+func buildRef(info func() (*debug.BuildInfo, bool)) string {
+	if bi, ok := info(); ok && moduleVersionRE.MatchString(bi.Main.Version) {
+		return bi.Main.Version
+	}
+	return "latest" // "(devel)" or a local VCS version such as v1.0.2+dirty
+}
+
 // Exit codes.
 const (
 	ExitOK       = 0

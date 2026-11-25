@@ -17,6 +17,12 @@ server, logx and testkit are frozen from v1.0.0 until v2.
   enabled. The CLI shows it on `semii`, `help`, `version` and `new`;
   generated apps show it on startup in development.
 
+### Fixed
+
+- `semii` installed from a commit or branch (`go install …@main`) fetched
+  the framework at `@latest` (the last release), whose packages could lag
+  behind the templates; it now fetches the exact commit it was built from.
+
 ## [1.0.2] - 2026-11-25
 
 ### Added

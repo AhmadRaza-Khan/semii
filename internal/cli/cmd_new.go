@@ -93,11 +93,12 @@ func runNew(e *Env, args []string) error {
 	if err := e.sqlcGenerate(root); err != nil {
 		return err
 	}
-	// A development CLI has no release to require: fetch the newest
-	// published framework instead.
+	// A development CLI has no release to require: fetch the framework it
+	// was built from (go install …@main), or the newest release.
 	if local == "" && !gen.IsRelease(Version) {
-		e.printf("  run       go get %s@latest\n", gen.SemiiModule)
-		if err := e.runTool(root, "go", "get", gen.SemiiModule+"@latest"); err != nil {
+		ref := gen.SemiiModule + "@" + frameworkRef
+		e.printf("  run       go get %s\n", ref)
+		if err := e.runTool(root, "go", "get", ref); err != nil {
 			return toolErr(fmt.Errorf("%w\nhint: to build against a local checkout of the framework, set %s to its path", err, EnvLocalSemii))
 		}
 	}
