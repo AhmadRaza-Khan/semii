@@ -4,7 +4,8 @@
 //
 // common.txt is the "10k-most-common" list from SecLists
 // (https://github.com/danielmiessler/SecLists), MIT License,
-// Copyright (c) 2018 Daniel Miessler.
+// Copyright (c) 2018 Daniel Miessler; see the LICENSE file in this
+// directory.
 package password
 
 import (

@@ -238,3 +238,10 @@ go test -run x -bench . ./web        # router overhead vs plain ServeMux (releas
 SEMII_E2E=1 go test -timeout 40m -run EndToEnd -v ./internal/cli
 SEMII_E2E=1 SEMII_E2E_ONLY=sqlite go test -run EndToEnd -v ./internal/cli
 ```
+
+## License
+
+semii is released under the [MIT License](LICENSE). The common-password
+list in `auth/password` comes from
+[SecLists](https://github.com/danielmiessler/SecLists), also MIT; see
+[auth/password/LICENSE](auth/password/LICENSE).

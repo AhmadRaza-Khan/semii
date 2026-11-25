@@ -7,6 +7,14 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-25
+
+### Added
+
+- MIT license (`LICENSE`), and the SecLists license for the bundled
+  common-password list (`auth/password/LICENSE`). pkg.go.dev shows the
+  documentation from this version on.
+
 ## [1.0.1] - 2026-11-25
 
 ### Fixed
@@ -74,6 +82,7 @@ Fixes from a manual pentest of a generated app (all strategies, Postgres):
   `api migrate`.
 - Documentation in `docs/` and two example apps in `examples/`.
 
-[Unreleased]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AhmadRaza-Khan/semii/releases/tag/v1.0.0
