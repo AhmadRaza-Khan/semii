@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/AhmadRaza-Khan/semii/banner"
 	"github.com/AhmadRaza-Khan/semii/internal/gen"
 	"github.com/AhmadRaza-Khan/semii/templates"
 )
@@ -78,6 +79,15 @@ func (e *Env) debugf(format string, args ...any) {
 	}
 }
 
+// showBanner prints the semii leaf above line when stdout is a terminal
+// and colour is enabled, and reports whether it did.
+func (e *Env) showBanner(line string) bool {
+	if e.NoColor {
+		return false
+	}
+	return banner.Print(e.Stdout, line, "Rails-speed scaffolding for Go APIs")
+}
+
 func (e *Env) renderer() gen.Renderer {
 	return gen.Renderer{FS: templates.FS, Version: Version}
 }
@@ -122,6 +132,7 @@ func usage(w io.Writer) {
 func Run(args []string, e *Env) int {
 	rest := e.globalFlags(args)
 	if len(rest) == 0 || rest[0] == "help" || rest[0] == "-h" || rest[0] == "--help" {
+		e.showBanner("semii " + Version)
 		usage(e.Stdout)
 		if len(rest) == 0 {
 			return ExitUser

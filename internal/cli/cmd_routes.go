@@ -82,7 +82,10 @@ func runRoutes(e *Env, args []string) error {
 }
 
 func runVersion(e *Env, args []string) error {
-	e.printf("semii %s (%s)\n", Version, runtime.Version())
+	line := fmt.Sprintf("semii %s (%s)", Version, runtime.Version())
+	if !e.showBanner(line) {
+		e.printf("%s\n", line)
+	}
 	if p, err := gen.FindProject(e.Dir); err == nil {
 		e.printf("project %s: created by semii %s, template v%d\n", p.Module, p.Semii, p.Template)
 	}

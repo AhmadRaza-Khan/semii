@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="semii: an autumn leaf with Semii burned into it" width="420">
+</p>
+
 # semii
 
 Rails-speed scaffolding for Go backend APIs. Conventions are delivered
@@ -47,6 +51,9 @@ indexes declared in `db/mongo`).
 
 ## Packages so far
 
+- `banner` — the semii leaf drawn in the terminal with half blocks (true
+  colour or 256 colours); printed by the CLI and by generated apps in
+  development, and only to an interactive terminal with colour enabled.
 - `web` — router over `http.ServeMux`, `HandlerFunc` returning `error`,
   RFC 9457 problems, `Decode`/`DecodeQuery`/`JSON`, cursor and offset
   pagination, `Optional[T]`, and the built-in middleware (RequestID, RealIP,

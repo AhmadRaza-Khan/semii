@@ -12,6 +12,7 @@ import (
 
 	"{{.Module}}/internal/app"
 	"{{.Module}}/internal/config"
+	"{{.Semii}}/banner"
 	"{{.Semii}}/logx"
 	"{{.Semii}}/server"
 )
@@ -35,6 +36,10 @@ func run() error {
 			return fmt.Errorf("unknown command %q (usage: api [migrate])", os.Args[1])
 		}
 		return app.Migrate(ctx, cfg, log)
+	}
+	if cfg.Env == "development" {
+		// The semii leaf, only in an interactive terminal (never in logs).
+		banner.Print(os.Stderr, {{printf "%q" (print .Name " · development")}}, "built with semii")
 	}
 	a, err := app.New(ctx, cfg, log)
 	if err != nil {

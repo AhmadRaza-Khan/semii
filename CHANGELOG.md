@@ -7,6 +7,16 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+### Added
+
+- The semii logo: an autumn leaf with "Semii" burned into it
+  (`docs/assets/`: `logo.png`, `logo.svg`, `icon.png`,
+  `social-preview.png`), shown at the top of the README.
+- `banner` package: draws the leaf in the terminal with half blocks in
+  true colour or 256 colours, only on an interactive terminal with colour
+  enabled. The CLI shows it on `semii`, `help`, `version` and `new`;
+  generated apps show it on startup in development.
+
 ## [1.0.2] - 2026-11-25
 
 ### Added

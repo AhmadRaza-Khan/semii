@@ -72,6 +72,7 @@ func runNew(e *Env, args []string) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
+	e.showBanner("semii " + Version)
 	e.printf("Creating %s\n", name)
 	if err := plan.Apply(e.Stdout, e.Force, e.DryRun); err != nil {
 		return err

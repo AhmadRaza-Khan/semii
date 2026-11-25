@@ -17,6 +17,7 @@ loaded or rewritten at runtime.
   - [server](packages/server.md): run, health and graceful shutdown
   - [logx](packages/logx.md): slog setup and request loggers
   - [testkit](packages/testkit.md): HTTP client, assertions and test databases
+  - [banner](packages/banner.md): the semii leaf in the terminal
 
 ## Principles
 
