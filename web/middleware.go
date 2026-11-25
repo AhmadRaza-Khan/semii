@@ -143,6 +143,18 @@ func SecurityHeaders(env string) Middleware {
 	}
 }
 
+// NoStore marks responses as not cacheable (Cache-Control: no-store), for
+// endpoints that return credentials such as tokens, session cookies or API
+// keys (RFC 6749 section 5.1). A handler may still set its own value.
+func NoStore() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // DefaultBodyLimit is the BodyLimit applied when n <= 0.
 const DefaultBodyLimit int64 = 1 << 20
 

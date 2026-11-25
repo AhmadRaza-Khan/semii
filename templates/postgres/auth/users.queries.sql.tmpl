@@ -41,6 +41,12 @@ WHERE id = sqlc.arg('id') AND NOT (sqlc.arg('role')::text = ANY(roles));
 INSERT INTO auth_tokens (token_hash, user_id, kind, expires_at, created_at)
 VALUES ($1, $2, $3, $4, $5);
 
+-- name: ExpireAuthTokens :exec
+-- Marks every unused token of a kind used, e.g. outstanding reset links
+-- once the password has been reset.
+UPDATE auth_tokens SET used_at = sqlc.arg('now')::timestamptz
+WHERE user_id = sqlc.arg('user_id') AND kind = sqlc.arg('kind') AND used_at IS NULL;
+
 -- name: ConsumeAuthToken :one
 -- Single use: only an unused, unexpired token is consumed, atomically.
 UPDATE auth_tokens SET used_at = sqlc.arg('now')::timestamptz

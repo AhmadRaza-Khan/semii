@@ -98,6 +98,17 @@ func TestHealthEndpoints(t *testing.T) {
 	if code, body := h.get("/healthz"); code != 200 || body["status"] != "ok" || body["version"] != "v1.2.3" {
 		t.Errorf("healthz %d %v", code, body)
 	}
+	hz, err := http.Get(h.url + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hz.Body.Close()
+	for k, v := range map[string]string{"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+		"X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'"} {
+		if got := hz.Header.Get(k); got != v {
+			t.Errorf("healthz %s = %q, want %q", k, got, v)
+		}
+	}
 	if code, body := h.get("/readyz"); code != 200 || body["status"] != "ok" ||
 		body["checks"].(map[string]any)["db"] != "ok" {
 		t.Errorf("readyz %d %v", code, body)

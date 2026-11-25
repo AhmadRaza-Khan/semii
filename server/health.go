@@ -114,6 +114,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", "no-store")
+	// Health checks bypass the application's middleware; keep the same
+	// security headers as SecurityHeaders.
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(b, '\n'))
 }

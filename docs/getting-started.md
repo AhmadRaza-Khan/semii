@@ -41,6 +41,12 @@ Each resource gets a model, input types with validation, a repository
 interface with a database implementation and an in-memory fake, a
 service, HTTP handlers, routes, a factory and tests.
 
+Resources are shared tables. With auth set up, their routes require
+`auth.Authenticated()`, so **any signed-in user can list, read, change and
+delete every record**. For per-user data (notes, orders, carts) add an
+owner column and scope the repository by the caller; see
+[Per-user data](packages/auth.md#per-user-data).
+
 ## Run it
 
 ```sh

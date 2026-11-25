@@ -112,6 +112,11 @@ func (s *store) CreateAuthToken(ctx context.Context, t authToken) error {
 	})
 }
 
+// ExpireAuthTokens marks every unused token of kind for the user used.
+func (s *store) ExpireAuthTokens(ctx context.Context, id {{.IDGo}}, kind string, at time.Time) error {
+	return s.queries(ctx).ExpireAuthTokens(ctx, sqlc.ExpireAuthTokensParams{UserID: id, Kind: kind, Now: at})
+}
+
 // ConsumeAuthToken marks an unused, unexpired token used (atomically) and
 // returns its user; db.ErrNotFound otherwise.
 func (s *store) ConsumeAuthToken(ctx context.Context, hash, kind string, at time.Time) ({{.IDGo}}, error) {

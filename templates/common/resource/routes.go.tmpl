@@ -12,6 +12,9 @@ func Register(r *web.Router, h *Handler) {
 	// Require(...) once authentication is set up.
 	g := r.Group("{{.Route}}").Public()
 {{- else}}
+	// Authenticated: every signed-in user can reach every {{.Var}} by id.
+	// For per-user data, scope the repository by auth.FromContext; see
+	// docs/packages/auth.md#per-user-data.
 	g := r.Group("{{.Route}}").Require(semiiauth.Authenticated())
 {{- end}}
 	g.HandleFunc("GET /", h.List)

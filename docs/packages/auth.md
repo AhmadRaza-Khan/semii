@@ -60,7 +60,7 @@ characters, not in the 10,000 most common passwords.
 | `POST /auth/logout` | revokes the session, or the refresh family in the body |
 | `POST /auth/refresh` | new token pair (jwt) |
 | `POST /auth/password/forgot` | 202 always |
-| `POST /auth/password/reset` | token + password; revokes every session and refresh token |
+| `POST /auth/password/reset` | token + password; revokes every session and refresh token, and every other outstanding reset link |
 | `POST /auth/email/verify`, `/email/resend` | one-time verification links |
 | `GET /auth/me` | the current user |
 | `POST/GET /auth/api-keys`, `DELETE /auth/api-keys/{id}` | users manage their keys; keys cannot manage keys |
@@ -68,6 +68,36 @@ characters, not in the 10,000 most common passwords.
 Login is rate limited per IP (20/min) and locks an account after 5
 failures (1 m, 5 m, 15 m, then 1 h), always answering
 `invalid_credentials`. Unknown emails still cost a password hash.
+Every `/auth` response is sent with `Cache-Control: no-store`. Access
+tokens stay valid until they expire (15 minutes) even after a logout or
+password reset; refresh tokens and sessions are revoked immediately.
+
+## Per-user data
+
+Policies decide who may call a route, not which records they may touch.
+Generated resources are shared: an `Authenticated()` route lets every
+user reach every record by id. For data that belongs to a user, add an
+owner column of the project's id type (`uuid` or `int64`) and filter by
+it in every query:
+
+```sh
+semii g resource Note title:string body:text:null owner_id:uuid
+```
+
+Then remove `owner_id` from the generated create and update input types,
+so clients cannot set it. Set it from the principal on create, and check
+it on every read, update and delete:
+
+```go
+p, _ := auth.FromContext(r.Context()) // create: OwnerID comes from p.ID
+note, err := h.svc.Get(ctx, id)
+if err != nil || note.OwnerID.String() != p.ID {
+	return web.NotFound("note not found") // 404, not 403: do not confirm the id exists
+}
+```
+
+For lists, filter in the query (`WHERE owner_id = $1`) rather than after
+fetching. `Role("admin")` routes can skip the check.
 
 ## Configuration (`AUTH_`)
 

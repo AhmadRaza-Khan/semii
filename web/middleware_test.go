@@ -480,3 +480,14 @@ func TestErrorAfterWriteBehindGzip(t *testing.T) {
 		t.Errorf("%d %q", w.Code, w.Body)
 	}
 }
+
+func TestNoStore(t *testing.T) {
+	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	if got := do(t, NoStore()(noop), "GET", "/", "").Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	override := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Header().Set("Cache-Control", "private") })
+	if got := do(t, NoStore()(override), "GET", "/", "").Header().Get("Cache-Control"); got != "private" {
+		t.Errorf("handler override lost: %q", got)
+	}
+}

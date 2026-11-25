@@ -7,6 +7,22 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+### Security
+
+Fixes from a manual pentest of a generated app (all strategies, Postgres):
+
+- Password reset now also invalidates every other outstanding reset link
+  for the account; an older link could previously change the password
+  again after a reset.
+- `/auth` responses are sent with `Cache-Control: no-store` (new
+  `web.NoStore` middleware), so tokens, session cookies and API keys are
+  never cached (RFC 6749 section 5.1).
+- `/healthz` and `/readyz` send the same security headers as
+  `web.SecurityHeaders`.
+- Documented that generated resources are shared tables reachable by any
+  signed-in user, with a per-user ownership recipe; generated `routes.go`
+  says so too.
+
 ### Changed
 
 - Go 1.26 is the minimum version; dependencies updated (govulncheck clean).

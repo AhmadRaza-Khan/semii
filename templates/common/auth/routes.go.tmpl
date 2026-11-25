@@ -7,7 +7,8 @@ import (
 
 // Register mounts the /auth endpoints.
 func Register(r *web.Router, h *Handler) {
-	g := r.Group("/auth")
+	// Responses carry tokens, session cookies and API keys: never cache them.
+	g := r.Group("/auth", web.NoStore())
 	g.HandleFunc("POST /register", h.Register).Public()
 	g.HandleFunc("POST /login", h.Login).Public()
 	g.HandleFunc("POST /logout", h.Logout).Require(semiiauth.Authenticated())

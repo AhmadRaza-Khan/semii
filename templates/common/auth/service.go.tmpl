@@ -210,6 +210,10 @@ func (s *Service) ResetPassword(ctx context.Context, token, pw string) error {
 		if err := s.store.UpdatePassword(ctx, id, hash, t); err != nil {
 			return err
 		}
+		// Older reset links (from earlier forgot requests) die with this one.
+		if err := s.store.ExpireAuthTokens(ctx, id, "reset", t); err != nil {
+			return err
+		}
 		for _, st := range s.active {
 			if err := st.revokeAll(ctx, id); err != nil {
 				return err

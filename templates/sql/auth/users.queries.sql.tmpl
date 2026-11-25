@@ -40,6 +40,11 @@ UPDATE users SET roles = ? WHERE id = ?;
 -- name: CreateAuthToken :exec
 INSERT INTO auth_tokens (token_hash, user_id, kind, expires_at, created_at) VALUES (?, ?, ?, ?, ?);
 
+-- name: ExpireAuthTokens :exec
+-- Marks every unused token of a kind used, e.g. outstanding reset links
+-- once the password has been reset.
+UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND kind = ? AND used_at IS NULL;
+
 -- name: UseAuthToken :execrows
 -- Single use: only an unused, unexpired token is updated.
 UPDATE auth_tokens SET used_at = ?
