@@ -11,17 +11,6 @@ through code generation, never runtime magic.
 reference, one page per package, deployment). **Examples:**
 [examples/](examples/README.md). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
-## Status
-
-| Milestone | Scope | State |
-|-----------|-------|-------|
-| M1 | web core: router, groups, error handlers, problem+json, JSON, middleware, pagination | done |
-| M2 | config, server, logx | done |
-| M3 | generator engine + Postgres (`semii new`, `generate resource`, …) | done |
-| M4 | auth | done |
-| M5 | testkit + MySQL/SQLite/Mongo | done |
-| M6 | ops, docs, examples | done |
-
 ## Quick start
 
 Needs Go 1.26 or newer, with sqlc and `$(go env GOPATH)/bin` on PATH.
@@ -39,7 +28,7 @@ semii routes
 semii dev
 ```
 
-## CLI (M3)
+## CLI
 
 `new`, `generate resource|migration|middleware`, `dev`, `routes`,
 `migrate up|down|status|redo|create`, `db seed`, `doctor`, `version`, with
@@ -49,7 +38,7 @@ be re-run to add strategies. `--db postgres|mysql|sqlite|mongo` works for
 every command (Mongo has no SQL migrations: `migrate up` ensures the
 indexes declared in `db/mongo`).
 
-## Packages so far
+## Packages
 
 - `banner` — the semii leaf drawn in the terminal with half blocks (true
   colour or 256 colours); printed by the CLI and by generated apps in
@@ -97,26 +86,28 @@ indexes declared in `db/mongo`).
   `Hasher`, the length + common-password policy (SecLists top 10k).
 - `web.Date` — date-only JSON (`"2006-01-02"`) for `date` fields.
 
-## Design decisions (not spelled out in the spec)
+## Design decisions
+
+### Web and core packages
 
 - **`web.Policy` is an interface** (`Authorize(*http.Request) error`), not
   `auth.Policy`. The spec has web reference `auth.Policy` while auth depends
   on web, which would be an import cycle and would break P5 (web usable on
-  its own). In M4 `auth.Policy` must implement `web.Policy`; a policy that
+  its own). `auth.Policy` implements `web.Policy`; a policy that
   implements `fmt.Stringer` is listed by that name in `semii routes`.
 - **Auth sentinels live in web** (`web.ErrUnauthenticated`, `ErrForbidden`,
-  `ErrInvalidCredentials`) so `NewRouter` can map them. M4 re-exports them
-  as `auth.Err*`.
+  `ErrInvalidCredentials`) so `NewRouter` can map them; auth re-exports
+  them as `auth.Err*`.
 - **`"GET /"` inside a prefixed group is the group path itself**
   (`Group("/orders")` + `"GET /"` gives `GET /orders`), not a ServeMux
   subtree. Use `/{$}` or a trailing slash if you want the ServeMux meanings.
 - **`web.Error` has a `Header` field** for extra response headers
-  (`Retry-After` now, `WWW-Authenticate` in M4).
+  (for example `Retry-After` or `WWW-Authenticate`).
 - **Raising the body limit on one route:** an inner `BodyLimit` replaces an
   outer one, e.g. `r.Group("/uploads", web.BodyLimit(10<<20))`.
 - **`CORS` panics on invalid config** (`"*"` with credentials), because its
   signature has no error return. Call `CORSConfig.Validate()` at config load
-  (M2) to report the error cleanly.
+  to report the error cleanly.
 - **web imports logx** so `web.Logger` can store the request logger for
   `logx.FromContext`. logx is stdlib-only, so web's dependency footprint is
   unchanged; logx does not import web.
@@ -131,7 +122,7 @@ indexes declared in `db/mongo`).
   registration time to name handlers for `Routes()`, plus in the config
   loader and validate as the spec allows.
 
-### M3
+### Generator and CLI
 
 - **Generated layout additions:** `app.Build(cfg, log, pool)` (used by
   tests) and `app.Routes()` (used by `semii routes`, no database needed);
@@ -141,7 +132,7 @@ indexes declared in `db/mongo`).
 - **Routes are kebab-case** (`OrderItem` → `/order-items`); tables stay snake
   plural (`order_items`). The spec only shows a one-word example.
 - **Without auth, generated resources are `Public()`** with a comment; with
-  auth configured they will use `Require(auth.Authenticated())` (M4).
+  auth configured they use `Require(auth.Authenticated())`.
 - **`migrate` returns results:** `Up` returns `([]Result, error)` and the
   status call is `List` (a `Status` type exists), so the CLI can print what
   ran.
@@ -153,7 +144,8 @@ indexes declared in `db/mongo`).
 - **`semii dev`** sets `HTTP_DRAIN_DELAY=-1s` (no drain wait between reloads)
   and runs the app in its own process group with a parent-death signal on
   Linux, so Ctrl+C stops it once and a killed watcher never orphans it.
-### M4
+
+### Auth
 
 - **`auth.Policy` is a small struct** (name + check), not a bare func type,
   so `semii routes` can print `authenticated`, `role:admin`, … It
@@ -180,8 +172,7 @@ indexes declared in `db/mongo`).
   registered between `semii:strategies` markers, which is what makes
   `generate auth --strategy` re-runnable. The project templates gained
   markers for config, the test environment and seeds, and `app.go` builds
-  everything in one `newApp` (template v1 is not yet published, so it was
-  amended rather than versioned).
+  everything in one `newApp`.
 - **auth imports config, db and logx** (for `config.Secret`, `db.ErrNotFound`
   and the request logger) in addition to web; none of them adds a
   third-party dependency beyond what web already has, plus golang-jwt and
@@ -189,7 +180,7 @@ indexes declared in `db/mongo`).
 - **Session rotation on privilege change** has no trigger yet: v1 exposes
   no endpoint that changes roles.
 
-### M5
+### Databases
 
 - **One template tree, per-database parts:** `templates/common` holds what
   every database shares (models, DTOs, services, handlers, the in-memory
@@ -216,7 +207,7 @@ indexes declared in `db/mongo`).
 - **Go 1.26 is the minimum** (the two latest stable releases), for the
   framework and generated projects alike.
 
-### M6
+### Deployment and releases
 
 - **Generated projects** get a distroless Dockerfile, a compose file
   running app + database, `.github/workflows/ci.yml` (lint, vet,
@@ -224,7 +215,8 @@ indexes declared in `db/mongo`).
   own job), optional `--deploy ssh` workflow, and systemd, PM2 and Nginx
   files. The binary has an `api migrate` command for deploys.
 - **Framework resolution:** a release CLI requires its own version in the
-  generated go.mod; a development build runs `go get …/semii@latest`.
+  generated go.mod; a development build fetches the framework commit it
+  was built from (`go install …@main`), or `@latest` when built locally.
   With `SEMII_LOCAL_PATH` the project uses a `replace` directive instead,
   which points outside the Docker build context: run `go mod vendor`
   before `docker build`, and CI will not resolve it.
