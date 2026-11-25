@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -177,5 +178,28 @@ func TestEndToEnd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestModuleVersion(t *testing.T) {
+	info := func(v string) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{Main: debug.Module{Version: v}}, true }
+	}
+	none := func() (*debug.BuildInfo, bool) { return nil, false }
+	for _, c := range []struct {
+		stamped string
+		info    func() (*debug.BuildInfo, bool)
+		want    string
+	}{
+		{"v1.2.3", info("v9.9.9"), "v1.2.3"},          // ldflags release wins
+		{"v1.0.1-dev", info("v1.0.0"), "v1.0.0"},      // go install module@v1.0.0
+		{"v1.0.1-dev", info("(devel)"), "v1.0.1-dev"}, // local build
+		{"v1.0.1-dev", info("v1.0.0+dirty"), "v1.0.1-dev"},
+		{"v1.0.1-dev", info("v1.0.1-0.20261125120000-5a526c62d55f"), "v1.0.1-dev"},
+		{"v1.0.1-dev", none, "v1.0.1-dev"},
+	} {
+		if got := moduleVersion(c.stamped, c.info); got != c.want {
+			t.Errorf("moduleVersion(%q) = %q, want %q", c.stamped, got, c.want)
+		}
 	}
 }

@@ -7,6 +7,14 @@ server, logx and testkit are frozen from v1.0.0 until v2.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-25
+
+### Fixed
+
+- `semii` installed with `go install …/cmd/semii@vX.Y.Z` reported
+  `v0.6.0-dev` and stamped it into `.semii.yaml` and generated files; it
+  now reports the installed release. Release archives were not affected.
+
 ## [1.0.0] - 2026-11-25
 
 ### Security
@@ -66,5 +74,6 @@ Fixes from a manual pentest of a generated app (all strategies, Postgres):
   `api migrate`.
 - Documentation in `docs/` and two example apps in `examples/`.
 
-[Unreleased]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/AhmadRaza-Khan/semii/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AhmadRaza-Khan/semii/releases/tag/v1.0.0
